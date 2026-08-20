@@ -67,8 +67,6 @@ function generateSingleEliminationBracket($pdo, $tournamentId)
 {
     ensureDoubleElimSchema($pdo);
 
-    $pdo->prepare("UPDATE tournament_registrations SET status = 'approved' WHERE tournament_id = :tid")->execute(['tid' => $tournamentId]);
-
     $check = $pdo->prepare("SELECT COUNT(*) FROM matches WHERE tournament_id = :tid AND group_id IS NULL");
     $check->execute(['tid' => $tournamentId]);
     if ($check->fetchColumn() > 0) {
@@ -84,7 +82,7 @@ function generateSingleEliminationBracket($pdo, $tournamentId)
     $teams = getSeededTeamsWithCategory($pdo, $tournamentId, $gameId);
 
     if (count($teams) < 2) {
-        throw new Exception("ต้องมีผู้แข่งขันที่อนุมัติหรือเช็คอินแล้วอย่างน้อย 2 ทีม");
+        throw new Exception("ยังไม่สามารถจัดสายการแข่งขันได้: ต้องมีผู้เข้าแข่งขันที่ Check-in ครบถ้วนหรือผ่านการคัดเลือกแล้วอย่างน้อย 2 ทีม (ทีมที่ Check-in ไม่ครบ หรือแพ้บาย/WO จะถูกคัดออกจากการจัดสาย)");
     }
 
     $groupedTeams = [
@@ -119,8 +117,6 @@ function generateDoubleEliminationBracket($pdo, $tournamentId)
 {
     ensureDoubleElimSchema($pdo);
 
-    $pdo->prepare("UPDATE tournament_registrations SET status = 'approved' WHERE tournament_id = :tid")->execute(['tid' => $tournamentId]);
-
     $check = $pdo->prepare("SELECT COUNT(*) FROM matches WHERE tournament_id = :tid AND group_id IS NULL");
     $check->execute(['tid' => $tournamentId]);
     if ($check->fetchColumn() > 0) {
@@ -136,7 +132,7 @@ function generateDoubleEliminationBracket($pdo, $tournamentId)
     $teams = getSeededTeamsWithCategory($pdo, $tournamentId, $gameId);
 
     if (count($teams) < 2) {
-        throw new Exception("ต้องมีผู้แข่งขันที่อนุมัติหรือเช็คอินแล้วอย่างน้อย 2 ทีม");
+        throw new Exception("ยังไม่สามารถจัดสายการแข่งขันได้: ต้องมีผู้เข้าแข่งขันที่ Check-in ครบถ้วนหรือผ่านการคัดเลือกแล้วอย่างน้อย 2 ทีม (ทีมที่ Check-in ไม่ครบ หรือแพ้บาย/WO จะถูกคัดออกจากการจัดสาย)");
     }
 
     $groupedTeams = [
@@ -185,7 +181,8 @@ function getSeededTeamsWithCategory($pdo, $tournamentId, $gameId)
             FROM tournament_registrations tr
             WHERE tr.tournament_id = :tid 
               AND tr.player_id IS NOT NULL
-              AND (tr.status = 'approved' OR tr.status = 'checked_in')
+              AND tr.status NOT IN ('rejected', 'withdrawn', 'walkover', 'disqualified')
+              AND (tr.checkin_status IN ('checked_in', 'qualified') OR tr.status = 'qualified')
             ORDER BY tr.registered_at ASC
         ");
         $stmt->execute(['tid' => $tournamentId]);
@@ -197,7 +194,8 @@ function getSeededTeamsWithCategory($pdo, $tournamentId, $gameId)
             JOIN teams tm ON tm.team_id = tr.team_id
             WHERE tr.tournament_id = :tid 
               AND tr.team_id IS NOT NULL
-              AND (tr.status = 'approved' OR tr.status = 'checked_in')
+              AND tr.status NOT IN ('rejected', 'withdrawn', 'walkover', 'disqualified')
+              AND (tr.checkin_status IN ('checked_in', 'qualified') OR tr.status = 'qualified')
             ORDER BY tr.registered_at ASC
         ");
         $stmt->execute(['tid' => $tournamentId]);
@@ -242,11 +240,15 @@ function generateEliminationForCategory($pdo, $tournamentId, $seededTeamIds, $be
     $totalRounds = (int) log($bracketSize, 2);
     $seedOrder = buildSeedOrder($bracketSize);
 
+    $cat = 'open';
+    if (strpos($btype, 'female') !== false) $cat = 'female';
+    elseif (strpos($btype, 'male') !== false) $cat = 'male';
+
     $matchIds = [];
 
     $insertMatchStmt = $pdo->prepare("
-        INSERT INTO matches (tournament_id, group_id, bracket_type, best_of, round_number, match_index, team1_id, team2_id, status)
-        VALUES (:tid, NULL, :btype, :bo, :round, :idx, :team1, :team2, 'scheduled')
+        INSERT INTO matches (tournament_id, group_id, bracket_type, category, best_of, round_number, match_index, team1_id, team2_id, status)
+        VALUES (:tid, NULL, :btype, :cat, :bo, :round, :idx, :team1, :team2, 'scheduled')
     ");
 
     for ($round = 1; $round <= $totalRounds; $round++) {
@@ -267,6 +269,7 @@ function generateEliminationForCategory($pdo, $tournamentId, $seededTeamIds, $be
             $insertMatchStmt->execute([
                 'tid' => $tournamentId,
                 'btype' => $btype,
+                'cat' => $cat,
                 'bo' => $bestOf,
                 'round' => $round,
                 'idx' => $i,

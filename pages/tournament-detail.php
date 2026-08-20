@@ -37,77 +37,67 @@ $tournamentName = $tournament['name'] ?? ($tournament['title'] ?? ($tournament['
 $isOpenGame = (stripos($tournament['game_name'], 'open') !== false || stripos($tournamentName, 'open') !== false);
 $isUnder18 = (stripos($tournament['game_name'], 'ต่ำกว่า 18') !== false || stripos($tournamentName, 'ต่ำกว่า 18') !== false);
 
-// หากเป็นทัวร์นาเมนต์รุ่น Open บังคับ category เป็น open เสมอ
-if ($isOpenGame) {
-    $selectedCategory = 'open';
-} elseif ($selectedCategory === 'all') {
-    $selectedCategory = 'male';
-}
-
-// ดึง matches ทั้งหมดของทัวร์นาเมนต์ พร้อมปรับกรองประเภทให้แม่นยำขึ้น
-$sqlMatches = "
+// ดึง matches ทั้งหมดของทัวร์นาเมนต์
+$mStmt = $pdo->prepare("
     SELECT m.*, 
-           COALESCE(t1.name, u1.username, 'รอผู้ชนะรอบก่อน') AS team1_name, 
-           COALESCE(t2.name, u2.username, 'รอผู้ชนะรอบก่อน') AS team2_name,
-           tr1.category AS team1_cat,
-           tr2.category AS team2_cat
+           COALESCE(t1.name, p1.display_name, u1.username, 'รอผู้ชนะรอบก่อน') AS team1_name, 
+           COALESCE(t2.name, p2.display_name, u2.username, 'รอผู้ชนะรอบก่อน') AS team2_name,
+           COALESCE(tr1.category, 'open') AS team1_cat,
+           COALESCE(tr2.category, 'open') AS team2_cat
     FROM matches m
     LEFT JOIN teams t1 ON t1.team_id = m.team1_id
     LEFT JOIN players p1 ON p1.player_id = m.team1_id
     LEFT JOIN users u1 ON u1.user_id = p1.user_id
-    LEFT JOIN tournament_registrations tr1 ON tr1.tournament_id = m.tournament_id AND tr1.team_id = m.team1_id
+    LEFT JOIN tournament_registrations tr1 ON tr1.tournament_id = m.tournament_id AND (tr1.team_id = m.team1_id OR tr1.player_id = m.team1_id)
     LEFT JOIN teams t2 ON t2.team_id = m.team2_id
     LEFT JOIN players p2 ON p2.player_id = m.team2_id
     LEFT JOIN users u2 ON u2.user_id = p2.user_id
-    LEFT JOIN tournament_registrations tr2 ON tr2.tournament_id = m.tournament_id AND tr2.team_id = m.team2_id
+    LEFT JOIN tournament_registrations tr2 ON tr2.tournament_id = m.tournament_id AND (tr2.team_id = m.team2_id OR tr2.player_id = m.team2_id)
     WHERE m.tournament_id = :tid AND m.group_id IS NULL
-";
+    ORDER BY m.round_number, m.match_index, m.match_id
+");
+$mStmt->execute(['tid' => $tournamentId]);
+$allMatches = $mStmt->fetchAll();
 
-$paramsMatches = ['tid' => $tournamentId];
-
-if ($tournament['play_mode'] !== 'solo' && !$isOpenGame) {
-    $sqlMatches .= " AND (m.bracket_type LIKE :catSql OR tr1.category = :catExact OR tr2.category = :catExact)";
-    $paramsMatches['catSql'] = '%' . $selectedCategory . '%';
-    $paramsMatches['catExact'] = $selectedCategory;
+// ตรวจสอบหมวดหมู่/สายการแข่งขันที่มีอยู่ในแมตช์จริง
+$availableCategories = [];
+foreach ($allMatches as $m) {
+    $bt = strtolower($m['bracket_type'] ?? '');
+    if (strpos($bt, 'female') !== false) {
+        $availableCategories['female'] = '👩 สายทีมหญิง';
+    } elseif (strpos($bt, 'male') !== false) {
+        $availableCategories['male'] = '👨 สายทีมชาย';
+    } elseif (strpos($bt, 'open') !== false) {
+        $availableCategories['open'] = '⚡ สาย Open';
+    } else {
+        $availableCategories['open'] = '⚡ สายการแข่งขัน';
+    }
 }
 
-$sqlMatches .= " ORDER BY m.round_number, m.match_index";
+if (empty($availableCategories)) {
+    $availableCategories = ['open' => '⚡ สายการแข่งขัน'];
+}
 
-$mStmt = $pdo->prepare($sqlMatches);
-$mStmt->execute($paramsMatches);
-$matches = $mStmt->fetchAll();
+$reqCategory = $_GET['category'] ?? '';
+if (!empty($reqCategory) && isset($availableCategories[$reqCategory])) {
+    $selectedCategory = $reqCategory;
+} else {
+    $availableKeys = array_keys($availableCategories);
+    $selectedCategory = $availableKeys[0];
+}
 
-// กรณีไม่พบแมตช์ ให้ดึงทั้งหมดแล้วคัดกรองด้วย PHP เพื่อป้องกันกรณี bracket_type ในฐานข้อมูลเก็บไม่ตรงรูปแบบ
-if (empty($matches) && $tournament['play_mode'] !== 'solo' && !$isOpenGame) {
-    $sqlMatchesFallback = "
-        SELECT m.*, 
-               COALESCE(t1.name, u1.username, 'รอผู้ชนะรอบก่อน') AS team1_name, 
-               COALESCE(t2.name, u2.username, 'รอผู้ชนะรอบก่อน') AS team2_name,
-               tr1.category AS team1_cat,
-               tr2.category AS team2_cat
-        FROM matches m
-        LEFT JOIN teams t1 ON t1.team_id = m.team1_id
-        LEFT JOIN players p1 ON p1.player_id = m.team1_id
-        LEFT JOIN users u1 ON u1.user_id = p1.user_id
-        LEFT JOIN tournament_registrations tr1 ON tr1.tournament_id = m.tournament_id AND tr1.team_id = m.team1_id
-        LEFT JOIN teams t2 ON t2.team_id = m.team2_id
-        LEFT JOIN players p2 ON p2.player_id = m.team2_id
-        LEFT JOIN users u2 ON u2.user_id = p2.user_id
-        LEFT JOIN tournament_registrations tr2 ON tr2.tournament_id = m.tournament_id AND tr2.team_id = m.team2_id
-        WHERE m.tournament_id = :tid AND m.group_id IS NULL
-        ORDER BY m.round_number, m.match_index
-    ";
-    $mStmtFallback = $pdo->prepare($sqlMatchesFallback);
-    $mStmtFallback->execute(['tid' => $tournamentId]);
-    $allMatches = $mStmtFallback->fetchAll();
-    
+// กรองแมตช์ตามประเภทที่เลือก
+if (count($availableCategories) > 1) {
     $matches = array_filter($allMatches, function($m) use ($selectedCategory) {
         $bt = strtolower($m['bracket_type'] ?? '');
         $c1 = strtolower($m['team1_cat'] ?? '');
         $c2 = strtolower($m['team2_cat'] ?? '');
-        if (empty($bt) && empty($c1) && empty($c2)) return true;
-        return (strpos($bt, $selectedCategory) !== false || $c1 === $selectedCategory || $c2 === $selectedCategory);
+        if (strpos($bt, $selectedCategory) !== false) return true;
+        if ($c1 === $selectedCategory || $c2 === $selectedCategory) return true;
+        return false;
     });
+} else {
+    $matches = $allMatches;
 }
 
 $roundsGrouped = [];
@@ -117,35 +107,76 @@ foreach ($matches as $m) {
 $totalRounds = count($roundsGrouped);
 
 // ตารางคะแนนกลุ่ม (ถ้ามี)
-$groups = $pdo->prepare("
-    SELECT tg.tournament_group_id AS group_id, tg.name AS group_name,
-           gt.team_id, t.name AS team_name, t.team_category,
-           gt.played, gt.wins, gt.draws, gt.losses, gt.points, gt.score_diff
-    FROM tournament_groups tg
-    JOIN group_teams gt ON gt.group_id = tg.tournament_group_id
-    JOIN teams t ON t.team_id = gt.team_id
-    WHERE tg.tournament_id = :tid
-    ORDER BY tg.name, gt.points DESC, gt.score_diff DESC
-");
-$groups->execute(['tid' => $tournamentId]);
-$groupRows = $groups->fetchAll();
-
 $groupedStandings = [];
-foreach ($groupRows as $row) {
-    if (!$isOpenGame && ($row['team_category'] ?? '') !== $selectedCategory) {
-        continue;
+try {
+    $groups = $pdo->prepare("
+        SELECT tg.tournament_group_id AS group_id, tg.name AS group_name,
+               gt.team_id, t.name AS team_name, t.team_category,
+               gt.played, gt.wins, gt.draws, gt.losses, gt.points, gt.score_diff
+        FROM tournament_groups tg
+        JOIN group_teams gt ON gt.group_id = tg.tournament_group_id
+        JOIN teams t ON t.team_id = gt.team_id
+        WHERE tg.tournament_id = :tid
+        ORDER BY tg.name, gt.points DESC, gt.score_diff DESC
+    ");
+    $groups->execute(['tid' => $tournamentId]);
+    $groupRows = $groups->fetchAll();
+
+    foreach ($groupRows as $row) {
+        if (!$isOpenGame && ($row['team_category'] ?? '') !== $selectedCategory) {
+            continue;
+        }
+        $groupedStandings[$row['group_name']][] = $row;
     }
-    $groupedStandings[$row['group_name']][] = $row;
+} catch (Exception $e) {
+    $groupedStandings = [];
 }
 
 // ที่พักแนะนำ
-$accommodations = $pdo->prepare("
-    SELECT * FROM accommodations
-    WHERE tournament_id IS NULL OR tournament_id = :tid
-    ORDER BY accommodation_id
-");
-$accommodations->execute(['tid' => $tournamentId]);
-$accommodations = $accommodations->fetchAll();
+$accommodations = [];
+try {
+    $accStmt = $pdo->prepare("
+        SELECT * FROM accommodations
+        WHERE tournament_id IS NULL OR tournament_id = :tid
+        ORDER BY accommodation_id
+    ");
+    $accStmt->execute(['tid' => $tournamentId]);
+    $accommodations = $accStmt->fetchAll();
+} catch (Exception $e) {
+    try {
+        $accommodations = $pdo->query("SELECT * FROM accommodations ORDER BY accommodation_id DESC")->fetchAll();
+    } catch (Exception $ex) {
+        $accommodations = [];
+    }
+}
+
+// ดึงรายชื่อทีม/ผู้เข้าแข่งขันที่สมัครจริงในทัวร์นาเมนต์นี้ (เฉพาะที่ได้รับการอนุมัติ และตรงตามประเภทที่เลือก)
+$registeredCompetitors = [];
+try {
+    $sqlComp = "
+        SELECT tr.tournament_registration_id, tr.team_id, tr.player_id, 
+               COALESCE(tr.category, t.team_category, 'open') AS team_category,
+               tr.status, tr.registered_at,
+               COALESCE(t.name, p.display_name, 'Unknown Competitor') AS competitor_name,
+               t.logo_path, p.avatar_path,
+               (SELECT COUNT(*) FROM tournament_rosters r WHERE r.tournament_id = tr.tournament_id AND r.team_id = tr.team_id) AS roster_count
+        FROM tournament_registrations tr
+        LEFT JOIN teams t ON t.team_id = tr.team_id
+        LEFT JOIN players p ON p.player_id = tr.player_id
+        WHERE tr.tournament_id = :tid AND tr.status = 'approved'
+    ";
+    if (count($availableCategories) > 1 && $selectedCategory !== 'open') {
+        $sqlComp .= " AND COALESCE(tr.category, t.team_category, 'open') = :cat";
+        $regStmt = $pdo->prepare($sqlComp . " ORDER BY tr.tournament_registration_id ASC");
+        $regStmt->execute(['tid' => $tournamentId, 'cat' => $selectedCategory]);
+    } else {
+        $regStmt = $pdo->prepare($sqlComp . " ORDER BY tr.tournament_registration_id ASC");
+        $regStmt->execute(['tid' => $tournamentId]);
+    }
+    $registeredCompetitors = $regStmt->fetchAll(PDO::FETCH_ASSOC);
+} catch (Exception $e) {
+    $registeredCompetitors = [];
+}
 
 function roundName($roundNum, $totalRounds)
 {
@@ -515,6 +546,22 @@ function roundName($roundNum, $totalRounds)
                                     <?php echo !empty($tournament['match_date']) ? date('d / m / Y', strtotime($tournament['match_date'])) : (!empty($tournament['start_date']) ? date('d / m / Y', strtotime($tournament['start_date'])) : '-'); ?>
                                 </span>
                             </div>
+
+                            <?php if (!empty($tournament['venue_address'])): ?>
+                                <div class="flex items-start justify-between p-3 rounded-xl bg-white/5 border border-white/10 gap-3">
+                                    <span class="text-gray-400 flex items-center gap-2 shrink-0">
+                                        <i class="fa-solid fa-location-dot text-brand-orange"></i> สถานที่จัดงาน
+                                    </span>
+                                    <div class="text-right">
+                                        <span class="font-semibold text-white block text-xs">
+                                            <?= htmlspecialchars($tournament['venue_address']); ?>
+                                        </span>
+                                        <a href="https://www.google.com/maps/search/?api=1&query=<?= urlencode($tournament['venue_address']); ?>" target="_blank" rel="noopener" class="text-[11px] text-brand-orange hover:underline font-semibold inline-flex items-center gap-1 mt-1">
+                                            <i class="fa-solid fa-map-location-dot"></i> เปิดดูแผนที่ Google Maps
+                                        </a>
+                                    </div>
+                                </div>
+                            <?php endif; ?>
                         </div>
                     </div>
 
@@ -587,6 +634,64 @@ function roundName($roundNum, $totalRounds)
                 </section>
             <?php endif; ?>
 
+            <!-- ================= 5.5 REGISTERED TEAMS / COMPETITORS SECTION ================= -->
+            <section class="space-y-6" data-aos="fade-up" data-aos-duration="950">
+                <div class="flex items-center justify-between border-b border-white/15 pb-4">
+                    <div class="flex items-center gap-3">
+                        <i class="fa-solid fa-users text-brand-orange text-2xl"></i>
+                        <div>
+                            <h2 class="text-xl font-bold font-display text-white uppercase tracking-wider">
+                                รายชื่อทีม/ผู้สมัครที่ผ่านการอนุมัติ (APPROVED COMPETITORS)
+                            </h2>
+                            <p class="text-xs text-gray-400">
+                                รายชื่อทีมที่ลงทะเบียนถูกต้องและมีสิทธิ์เข้าร่วมแข่งขัน (<?= count($registeredCompetitors) ?> / <?= $tournament['max_teams'] ?> ทีม)
+                            </p>
+                        </div>
+                    </div>
+                </div>
+
+                <?php if (empty($registeredCompetitors)): ?>
+                    <div class="glass-panel p-8 rounded-3xl border border-white/15 text-center text-gray-400 text-sm">
+                        <i class="fa-solid fa-user-clock text-3xl text-brand-orange/60 mb-2 block"></i>
+                        ยังไม่มีทีมที่ผ่านการอนุมัติการสมัครในรายการนี้
+                    </div>
+                <?php else: ?>
+                    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                        <?php $cIdx = 1; foreach ($registeredCompetitors as $comp): 
+                            $cName = preg_replace('/\[.*\]/', '', $comp['competitor_name']);
+                            $cLink = $comp['team_id'] ? "team-profile.php?id=" . $comp['team_id'] : ($comp['player_id'] ? "player-profile.php?id=" . $comp['player_id'] : "#");
+                            $catBadge = 'Open';
+                            if ($comp['team_category'] === 'male') $catBadge = 'ทีมชาย';
+                            elseif ($comp['team_category'] === 'female') $catBadge = 'ทีมหญิง';
+                        ?>
+                            <a href="<?= $cLink ?>" class="glass-panel p-4 rounded-2xl border border-white/15 hover:border-brand-orange/50 transition-all transform hover:-translate-y-1 block group">
+                                <div class="flex items-center gap-3">
+                                    <div class="w-11 h-11 rounded-xl bg-white/10 border border-white/20 flex items-center justify-center text-brand-orange shrink-0 group-hover:border-brand-orange transition-colors">
+                                        <i class="fa-solid <?= $comp['team_id'] ? 'fa-shield-halved' : 'fa-user' ?> text-lg"></i>
+                                    </div>
+                                    <div class="truncate flex-1">
+                                        <div class="text-xs font-mono text-gray-400">#<?= $cIdx++ ?></div>
+                                        <div class="text-sm font-bold text-white group-hover:text-brand-orange transition-colors truncate">
+                                            <?= htmlspecialchars(trim($cName)) ?>
+                                        </div>
+                                        <div class="flex items-center gap-2 mt-1">
+                                            <span class="px-2 py-0.5 rounded text-[10px] font-bold <?= $comp['team_category'] === 'male' ? 'bg-blue-500/20 text-blue-300' : ($comp['team_category'] === 'female' ? 'bg-pink-500/20 text-pink-300' : 'bg-purple-500/20 text-purple-300') ?>">
+                                                <?= $catBadge ?>
+                                            </span>
+                                            <?php if ($comp['roster_count'] > 0): ?>
+                                                <span class="text-[10px] text-gray-400 font-mono">
+                                                    <i class="fa-solid fa-user-group text-[9px]"></i> <?= $comp['roster_count'] ?> คน
+                                                </span>
+                                            <?php endif; ?>
+                                        </div>
+                                    </div>
+                                </div>
+                            </a>
+                        <?php endforeach; ?>
+                    </div>
+                <?php endif; ?>
+            </section>
+
             <!-- ================= 6. TOURNAMENT BRACKET ================= -->
             <section class="space-y-6" data-aos="fade-up" data-aos-duration="1000">
                 <div class="flex flex-col sm:flex-row sm:items-center justify-between border-b border-white/15 pb-4 gap-4">
@@ -599,12 +704,16 @@ function roundName($roundNum, $totalRounds)
                     </div>
                 </div>
 
-                <!-- TAB กรองสายชาย/หญิง -->
-                <?php if ($tournament['play_mode'] !== 'solo' && !$isOpenGame): ?>
-                    <div class="flex items-center gap-2 glass-panel p-4 rounded-2xl border border-white/15 shadow-xl">
+                <!-- TAB กรองสายการแข่งขัน (ชาย/หญิง/Open) -->
+                <?php if (count($availableCategories) > 1): ?>
+                    <div class="flex items-center gap-2 glass-panel p-4 rounded-2xl border border-white/15 shadow-xl flex-wrap">
                         <span class="text-xs font-bold text-gray-400 uppercase mr-2"><i class="fa-solid fa-filter text-brand-orange mr-1"></i> เลือกสายการแข่งขัน:</span>
-                        <a href="tournament-detail.php?id=<?php echo $tournamentId; ?>&category=male" class="px-4 py-2 rounded-xl text-xs font-bold <?php echo ($selectedCategory === 'male') ? 'bg-brand-orange text-white shadow-orange-glow' : 'bg-white/10 text-gray-300 hover:bg-white/20'; ?>">👨 สายทีมชาย</a>
-                        <a href="tournament-detail.php?id=<?php echo $tournamentId; ?>&category=female" class="px-4 py-2 rounded-xl text-xs font-bold <?php echo ($selectedCategory === 'female') ? 'bg-brand-orange text-white shadow-orange-glow' : 'bg-white/10 text-gray-300 hover:bg-white/20'; ?>">👩 สายทีมหญิง</a>
+                        <?php foreach ($availableCategories as $catKey => $catLabel): ?>
+                            <a href="tournament-detail.php?id=<?php echo $tournamentId; ?>&category=<?php echo $catKey; ?>" 
+                               class="px-4 py-2 rounded-xl text-xs font-bold transition-all <?php echo ($selectedCategory === $catKey) ? 'bg-brand-orange text-white shadow-orange-glow' : 'bg-white/10 text-gray-300 hover:bg-white/20'; ?>">
+                                <?php echo $catLabel; ?>
+                            </a>
+                        <?php endforeach; ?>
                     </div>
                 <?php endif; ?>
 
@@ -672,6 +781,19 @@ function roundName($roundNum, $totalRounds)
                                                         <span class="font-mono text-xs font-black px-2 py-0.5 rounded bg-black/50 text-white border border-white/10"><?php echo $m['team2_score']; ?></span>
                                                     <?php endif; ?>
                                                 </div>
+
+                                                <?php if (!empty($m['match_day']) || !empty($m['scheduled_at']) || !empty($m['venue_station'])): ?>
+                                                    <div class="flex items-center justify-between text-[10px] text-gray-400 px-1 pt-1 border-t border-white/5 font-mono">
+                                                        <span class="text-amber-400 font-bold">
+                                                            <i class="fa-regular fa-calendar text-[9px]"></i> Day <?= $m['match_day'] ?? 1; ?><?= !empty($m['scheduled_at']) ? ' ' . date('H:i', strtotime($m['scheduled_at'])) . 'น.' : ''; ?>
+                                                        </span>
+                                                        <?php if (!empty($m['venue_station'])): ?>
+                                                            <span class="text-blue-300 font-sans truncate max-w-[85px]" title="<?= htmlspecialchars($m['venue_station']); ?>">
+                                                                <i class="fa-solid fa-location-dot text-[8px]"></i> <?= htmlspecialchars($m['venue_station']); ?>
+                                                            </span>
+                                                        <?php endif; ?>
+                                                    </div>
+                                                <?php endif; ?>
                                             </div>
                                         <?php endforeach; ?>
                                     </div>
@@ -698,27 +820,60 @@ function roundName($roundNum, $totalRounds)
                         </div>
                     </div>
                     <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
-                        <?php foreach ($accommodations as $a): ?>
-                            <div class="lodging-card p-6 rounded-2xl flex flex-col justify-between space-y-4">
-                                <div class="space-y-2">
-                                    <h3 class="font-bold text-white text-base font-display flex items-center gap-2">
-                                        <i class="fa-solid fa-building text-brand-orange"></i> <?php echo htmlspecialchars($a['name']); ?>
-                                    </h3>
-                                    <?php if ($a['address'] ?? ''): ?>
-                                        <p class="text-xs text-gray-300 font-normal leading-relaxed flex items-start gap-1.5">
-                                            <i class="fa-solid fa-location-dot text-brand-orange mt-0.5 shrink-0"></i>
-                                            <span><?php echo htmlspecialchars($a['address']); ?></span>
-                                        </p>
-                                    <?php endif; ?>
-                                </div>
-                                <?php if ($a['link_url'] ?? ''): ?>
-                                    <div class="pt-2 border-t border-white/10">
-                                        <a href="<?php echo htmlspecialchars($a['link_url']); ?>" target="_blank" rel="noopener" class="w-full py-2 px-3 rounded-xl bg-blue-600/30 hover:bg-blue-600 text-blue-200 hover:text-white border border-blue-500/30 text-xs font-bold flex items-center justify-center gap-1.5 transition-all">
-                                            <i class="fa-solid fa-map-location-dot"></i>
-                                            <span>ดูแผนที่ / จองที่พัก</span>
-                                        </a>
+                        <?php foreach ($accommodations as $a): 
+                            $imgUrl = null;
+                            if (!empty($a['image_path'])) {
+                                $raw = ltrim($a['image_path'], '/');
+                                if (file_exists(__DIR__ . '/../' . $raw)) {
+                                    $imgUrl = '../' . $raw;
+                                } elseif (file_exists(__DIR__ . '/../assets/' . $raw)) {
+                                    $imgUrl = '../assets/' . $raw;
+                                } elseif (file_exists(__DIR__ . '/../uploads/' . basename($raw))) {
+                                    $imgUrl = '../uploads/' . basename($raw);
+                                } elseif (file_exists(__DIR__ . '/../assets/uploads/' . basename($raw))) {
+                                    $imgUrl = '../assets/uploads/' . basename($raw);
+                                }
+                            }
+                        ?>
+                            <div class="lodging-card rounded-2xl overflow-hidden flex flex-col justify-between border border-white/15 shadow-xl hover:border-brand-orange/50 transition-all">
+                                <?php if ($imgUrl): ?>
+                                    <div class="h-40 w-full overflow-hidden relative">
+                                        <img src="<?= htmlspecialchars($imgUrl); ?>" alt="<?= htmlspecialchars($a['name']); ?>" class="w-full h-full object-cover" onerror="this.parentElement.style.display='none';">
+                                        <?php if (!empty($a['distance'])): ?>
+                                            <span class="absolute top-3 right-3 px-2.5 py-1 rounded-lg bg-black/70 backdrop-blur-md text-amber-300 text-[11px] font-bold border border-amber-400/30">
+                                                <i class="fa-solid fa-route"></i> ห่าง <?= htmlspecialchars($a['distance']); ?>
+                                            </span>
+                                        <?php endif; ?>
                                     </div>
                                 <?php endif; ?>
+                                <div class="p-5 space-y-3 flex-1 flex flex-col justify-between">
+                                    <div class="space-y-2">
+                                        <div class="flex items-start justify-between gap-2">
+                                            <h3 class="font-bold text-white text-sm font-display flex items-center gap-2">
+                                                <i class="fa-solid fa-building text-brand-orange"></i> <?php echo htmlspecialchars($a['name']); ?>
+                                            </h3>
+                                            <?php if (empty($imgUrl) && !empty($a['distance'])): ?>
+                                                <span class="px-2 py-0.5 rounded text-[10px] bg-amber-500/20 text-amber-300 border border-amber-500/30 font-bold shrink-0">
+                                                    <?= htmlspecialchars($a['distance']); ?>
+                                                </span>
+                                            <?php endif; ?>
+                                        </div>
+                                        <?php if ($a['address'] ?? ''): ?>
+                                            <p class="text-xs text-gray-300 font-normal leading-relaxed flex items-start gap-1.5">
+                                                <i class="fa-solid fa-location-dot text-brand-orange mt-0.5 shrink-0"></i>
+                                                <span><?php echo htmlspecialchars($a['address']); ?></span>
+                                            </p>
+                                        <?php endif; ?>
+                                    </div>
+                                    <?php if ($a['link_url'] ?? ''): ?>
+                                        <div class="pt-3 border-t border-white/10">
+                                            <a href="<?php echo htmlspecialchars($a['link_url']); ?>" target="_blank" rel="noopener" class="w-full py-2 px-3 rounded-xl bg-brand-orange/20 hover:bg-brand-orange text-brand-orange hover:text-white border border-brand-orange/30 text-xs font-bold flex items-center justify-center gap-1.5 transition-all">
+                                                <i class="fa-solid fa-map-location-dot"></i>
+                                                <span>ดูแผนที่ / จองที่พัก</span>
+                                            </a>
+                                        </div>
+                                    <?php endif; ?>
+                                </div>
                             </div>
                         <?php endforeach; ?>
                     </div>
@@ -877,6 +1032,19 @@ function roundName($roundNum, $totalRounds)
         const arenaBox = document.querySelector('.holo-arena-box');
         if (arenaBox) {
             arenaBox.addEventListener('scroll', drawProportionalCenterLines);
+        }
+
+        // Highlight อัตโนมัติเมื่อกดมาจากหน้าโปรไฟล์นักกีฬา
+        const urlParams = new URLSearchParams(window.location.search);
+        const autoHighlightId = urlParams.get('highlight');
+        if (autoHighlightId) {
+            setTimeout(() => {
+                highlightTeamPath(autoHighlightId);
+                const targetEl = document.querySelector(`[data-team-id="${autoHighlightId}"]`);
+                if (targetEl) {
+                    targetEl.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
+                }
+            }, 600);
         }
     </script>
 </body>

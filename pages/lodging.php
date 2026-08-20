@@ -271,8 +271,27 @@ $accommodations = $pdo->query("
                             <div>
                                 <!-- 🖼️ รูปภาพโรงแรมพร้อม Gradient Overlay ด้านล่าง -->
                                 <div class="aspect-video relative overflow-hidden bg-black/60">
-                                    <?php if (!empty($a['image_path'])): ?>
-                                        <img src="../assets/<?php echo htmlspecialchars($a['image_path']); ?>" alt="<?php echo htmlspecialchars($a['name']); ?>" class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500">
+                                    <?php 
+                                        $imgUrl = null;
+                                        if (!empty($a['image_path'])) {
+                                            $raw = ltrim($a['image_path'], '/');
+                                            if (file_exists(__DIR__ . '/../' . $raw)) {
+                                                $imgUrl = '../' . $raw;
+                                            } elseif (file_exists(__DIR__ . '/../assets/' . $raw)) {
+                                                $imgUrl = '../assets/' . $raw;
+                                            } elseif (file_exists(__DIR__ . '/../uploads/' . basename($raw))) {
+                                                $imgUrl = '../uploads/' . basename($raw);
+                                            } elseif (file_exists(__DIR__ . '/../assets/uploads/' . basename($raw))) {
+                                                $imgUrl = '../assets/uploads/' . basename($raw);
+                                            }
+                                        }
+                                    ?>
+                                    <?php if ($imgUrl): ?>
+                                        <img src="<?= htmlspecialchars($imgUrl); ?>" alt="<?php echo htmlspecialchars($a['name']); ?>" class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" onerror="this.parentElement.querySelector('.fallback-box').style.display='flex'; this.style.display='none';">
+                                        <div class="fallback-box w-full h-full hidden flex-col items-center justify-center text-gray-500 bg-slate-900/80">
+                                            <i class="fa-solid fa-hotel text-4xl mb-1 text-brand-orange/50"></i>
+                                            <span class="text-[10px] tracking-widest uppercase opacity-70">KORAT ESPORT LODGING</span>
+                                        </div>
                                     <?php else: ?>
                                         <div class="w-full h-full flex flex-col items-center justify-center text-gray-500 bg-slate-900/80">
                                             <i class="fa-solid fa-hotel text-4xl mb-1 text-brand-orange/50 placeholder-icon-pulse"></i>

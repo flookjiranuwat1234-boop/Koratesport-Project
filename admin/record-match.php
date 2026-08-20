@@ -137,6 +137,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && ($_POST['action'] ?? '') == 'save_sc
                             $pdo->beginTransaction();
                         }
 
+                        $pdo->prepare("DELETE FROM match_games WHERE match_id = :mid")->execute(['mid' => $matchId]);
+
                         foreach ($gamesToInsert as $g) {
                             $pdo->prepare("
                                 INSERT INTO match_games (match_id, game_number, team1_score, team2_score, winner_team_id)
@@ -170,10 +172,37 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && ($_POST['action'] ?? '') == 'save_sc
                         if ($pdo->inTransaction()) {
                             $pdo->rollBack();
                         }
-                        $error = 'บันทึกผลไม่สำเร็จ: ' . $e->getMessage();
                     }
                 }
             }
+        }
+    }
+}
+
+// อัปเดตตารางเวลาแข่งขัน วันที่ และสนาม/สเตชั่น (Multi-Day Match Scheduling)
+if ($_SERVER['REQUEST_METHOD'] == 'POST' && ($_POST['action'] ?? '') == 'update_schedule') {
+    if (!verifyCsrfToken($_POST['csrf_token'] ?? '')) {
+        $error = 'คำขอไม่ถูกต้อง กรุณาลองใหม่';
+    } else {
+        $matchId = (int) $_POST['match_id'];
+        $matchDay = max(1, (int) ($_POST['match_day'] ?? 1));
+        $scheduledAt = !empty($_POST['scheduled_at']) ? $_POST['scheduled_at'] : null;
+        $venueStation = trim($_POST['venue_station'] ?? '');
+
+        try {
+            $pdo->prepare("
+                UPDATE matches 
+                SET match_day = :mday, scheduled_at = :sched, venue_station = :venue 
+                WHERE match_id = :id
+            ")->execute([
+                'mday' => $matchDay,
+                'sched' => $scheduledAt,
+                'venue' => $venueStation ?: null,
+                'id' => $matchId
+            ]);
+            $success = 'อัปเดตตารางเวลา วันที่ และสนามแข่งขันเรียบร้อยแล้ว';
+        } catch (Exception $e) {
+            $error = 'ไม่สามารถอัปเดตตารางเวลาได้: ' . $e->getMessage();
         }
     }
 }
@@ -493,7 +522,27 @@ $csrfToken = generateCsrfToken();
                                             <?php foreach ($roundMatches as $m): ?>
                                             <tr class="hover:bg-slate-50/80 transition-colors">
                                                 <td class="p-4 text-center font-mono text-xs font-bold text-slate-400">
-                                                    #<?php echo $m['match_index'] + 1; ?>
+                                                    <div>#<?php echo $m['match_index'] + 1; ?></div>
+                                                    <div class="mt-1 flex flex-col items-center gap-1">
+                                                        <span class="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-50 text-amber-700 border border-amber-200">
+                                                            Day <?= $m['match_day'] ?? 1; ?>
+                                                        </span>
+                                                        <?php if (!empty($m['scheduled_at'])): ?>
+                                                            <span class="text-[10px] text-slate-500 font-sans">
+                                                                <i class="fa-regular fa-clock"></i> <?= date('H:i', strtotime($m['scheduled_at'])); ?> น.
+                                                            </span>
+                                                        <?php endif; ?>
+                                                        <?php if (!empty($m['venue_station'])): ?>
+                                                            <span class="text-[10px] text-blue-600 font-sans truncate max-w-[80px]" title="<?= htmlspecialchars($m['venue_station']); ?>">
+                                                                <i class="fa-solid fa-location-dot text-[9px]"></i> <?= htmlspecialchars($m['venue_station']); ?>
+                                                            </span>
+                                                        <?php endif; ?>
+                                                        <button type="button" 
+                                                            onclick="openScheduleModal(<?= $m['match_id']; ?>, <?= $m['match_day'] ?? 1; ?>, '<?= htmlspecialchars($m['scheduled_at'] ? date('Y-m-d\TH:i', strtotime($m['scheduled_at'])) : ''); ?>', '<?= htmlspecialchars(addslashes($m['venue_station'] ?? '')); ?>', '<?= htmlspecialchars(addslashes($m['team1_name'] . ' VS ' . $m['team2_name'])); ?>')"
+                                                            class="text-[10px] text-brand-orange hover:underline cursor-pointer flex items-center gap-1 mt-0.5">
+                                                            <i class="fa-solid fa-pen-to-square"></i> เวลา/สนาม
+                                                        </button>
+                                                    </div>
                                                 </td>
 
                                                 <td class="p-4 text-right font-bold text-slate-900">
@@ -600,5 +649,73 @@ $csrfToken = generateCsrfToken();
 
         </main>
     </div>
+
+    <!-- SCHEDULE MODAL -->
+    <div id="scheduleModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 hidden items-center justify-center p-4">
+        <div class="bg-white rounded-2xl max-w-md w-full p-6 space-y-5 shadow-2xl border border-slate-100">
+            <div class="flex items-center justify-between border-b border-slate-100 pb-3">
+                <h3 class="text-base font-bold font-display text-slate-900 flex items-center gap-2">
+                    <i class="fa-solid fa-calendar-days text-brand-orange"></i> กำหนดวัน เวลา และสนามแข่งขัน
+                </h3>
+                <button type="button" onclick="closeScheduleModal()" class="text-slate-400 hover:text-slate-600 p-1 cursor-pointer">
+                    <i class="fa-solid fa-xmark text-lg"></i>
+                </button>
+            </div>
+
+            <div id="modalMatchTitle" class="text-xs font-bold text-slate-600 bg-slate-50 p-3 rounded-xl border border-slate-200 text-center truncate">
+            </div>
+
+            <form method="POST" class="space-y-4">
+                <input type="hidden" name="csrf_token" value="<?php echo $csrfToken; ?>">
+                <input type="hidden" name="action" value="update_schedule">
+                <input type="hidden" name="match_id" id="sched_match_id">
+
+                <div>
+                    <label class="block text-xs font-bold uppercase text-slate-700 tracking-wider mb-1.5">วันที่แข่งขัน (Match Day)</label>
+                    <select name="match_day" id="sched_match_day" class="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-sm font-semibold text-slate-900 focus:bg-white focus:outline-none focus:border-brand-orange">
+                        <option value="1">📅 Day 1 (วันที่ 1 - รอบคัดเลือก/แบ่งกลุ่ม)</option>
+                        <option value="2">📅 Day 2 (วันที่ 2 - รอบตัดเชือก/ชิงชนะเลิศ)</option>
+                        <option value="3">📅 Day 3 (วันที่ 3)</option>
+                        <option value="4">📅 Day 4 (วันที่ 4)</option>
+                    </select>
+                </div>
+
+                <div>
+                    <label class="block text-xs font-bold uppercase text-slate-700 tracking-wider mb-1.5">วันและเวลาที่แข่งขัน</label>
+                    <input type="datetime-local" name="scheduled_at" id="sched_scheduled_at"
+                        class="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-sm font-medium text-slate-900 focus:bg-white focus:outline-none focus:border-brand-orange">
+                </div>
+
+                <div>
+                    <label class="block text-xs font-bold uppercase text-slate-700 tracking-wider mb-1.5">สนาม / สเตจ / เครื่องแข่งขัน (Station)</label>
+                    <input type="text" name="venue_station" id="sched_venue_station" placeholder="เช่น Main Stage, Station 1, เวทีกลาง"
+                        class="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-sm font-medium text-slate-900 focus:bg-white focus:outline-none focus:border-brand-orange">
+                </div>
+
+                <div class="flex justify-end gap-2 pt-3 border-t border-slate-100">
+                    <button type="button" onclick="closeScheduleModal()" class="px-4 py-2 rounded-xl bg-slate-100 text-slate-700 font-semibold text-xs cursor-pointer">ยกเลิก</button>
+                    <button type="submit" class="px-4 py-2 rounded-xl bg-brand-orange hover:bg-brand-glow text-white font-bold text-xs uppercase tracking-wider cursor-pointer">บันทึกตารางแข่ง</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <script>
+        function openScheduleModal(matchId, matchDay, scheduledAt, venueStation, matchTitle) {
+            document.getElementById('sched_match_id').value = matchId;
+            document.getElementById('sched_match_day').value = matchDay || 1;
+            document.getElementById('sched_scheduled_at').value = scheduledAt || '';
+            document.getElementById('sched_venue_station').value = venueStation || '';
+            document.getElementById('modalMatchTitle').innerText = matchTitle || 'แมตช์การแข่งขัน';
+
+            document.getElementById('scheduleModal').classList.remove('hidden');
+            document.getElementById('scheduleModal').classList.add('flex');
+        }
+
+        function closeScheduleModal() {
+            document.getElementById('scheduleModal').classList.add('hidden');
+            document.getElementById('scheduleModal').classList.remove('flex');
+        }
+    </script>
 </body>
 </html>     

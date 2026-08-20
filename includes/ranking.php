@@ -242,3 +242,22 @@ function bumpGroupTeam($pdo, $groupId, $teamId, $ownScore, $oppScore, $isDraw)
         'gid' => $groupId, 'team_id' => $teamId,
     ]);
 }
+
+/**
+ * ฟังก์ชันคำนวณคะแนนอันดับทั้งหมดใหม่จากประวัติแมตช์จริง
+ * ใช้ในกรณีที่ต้องการ Sync คะแนนให้ตรงกับผลการแข่งขันจริงทั้งหมด 100%
+ */
+function recalculateAllRankings($pdo)
+{
+    $pdo->exec("UPDATE team_rankings SET points = 0, matches_played = 0, wins = 0, losses = 0");
+    $pdo->exec("UPDATE player_rankings SET points = 0, matches_played = 0, wins = 0, losses = 0");
+
+    $stmt = $pdo->query("SELECT match_id FROM matches WHERE status IN ('completed', 'walkover') ORDER BY match_id ASC");
+    $matches = $stmt->fetchAll(PDO::FETCH_COLUMN);
+
+    foreach ($matches as $mId) {
+        try {
+            updateRankingsAfterMatch($pdo, $mId);
+        } catch (Exception $e) {}
+    }
+}

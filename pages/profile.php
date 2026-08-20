@@ -77,8 +77,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'updat
     }
 }
 
-// ================= 2. ส่งคำเชิญผู้เล่นเข้าทีมหลายคนพร้อมกัน (กัปตัน) =================
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'manage_team') {
+// ================= 2. จัดการทีมแบบครบวงจร (กัปตันทีม) =================
+// 2.1 แก้ไขข้อมูลทั่วไปของทีม (ชื่อ & โลโก้)
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'manage_team_info') {
     if (!verifyCsrfToken($_POST['csrf_token'] ?? '')) {
         $error = 'คำขอไม่ถูกต้อง';
     } else {
@@ -96,35 +97,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'manag
                 $pdo->prepare("UPDATE teams SET name = :name WHERE team_id = :tid")->execute(['name' => $teamNameInput, 'tid' => $teamId]);
             }
 
-            // รองรับการรับค่า add_player_ids เป็นอาเรย์ หรือค่าเดี่ยว
-            $invitedPlayerIds = $_POST['add_player_ids'] ?? [];
-            if (!is_array($invitedPlayerIds) && !empty($_POST['add_player_ids'])) {
-                $invitedPlayerIds = [(int)$_POST['add_player_ids']];
-            }
-
-            $role = trim($_POST['in_game_role'] ?? '');
-            $inviteCount = 0;
-
-            if (!empty($invitedPlayerIds)) {
-                foreach ($invitedPlayerIds as $addPlayerId) {
-                    $addPlayerId = (int) $addPlayerId;
-                    if ($addPlayerId <= 0 || $addPlayerId === $playerId) continue;
-
-                    $chkMem = $pdo->prepare("SELECT team_member_id, is_active FROM team_members WHERE team_id = :tid AND player_id = :pid");
-                    $chkMem->execute(['tid' => $teamId, 'pid' => $addPlayerId]);
-                    $existingMem = $chkMem->fetch();
-
-                    if (!$existingMem) {
-                        $pdo->prepare("INSERT INTO team_members (team_id, player_id, in_game_role, is_active) VALUES (:tid, :pid, :role, 0)")
-                            ->execute(['tid' => $teamId, 'pid' => $addPlayerId, 'role' => $role]);
-                        $inviteCount++;
-                    }
-                }
-                if ($inviteCount > 0) {
-                    $success = "ส่งคำเชิญเข้าร่วมทีมไปยังผู้เล่นจำนวน {$inviteCount} คนเรียบร้อยแล้ว!";
-                }
-            }
-
             if (isset($_FILES['team_logo']) && $_FILES['team_logo']['error'] === UPLOAD_ERR_OK) {
                 $ext = strtolower(pathinfo($_FILES['team_logo']['name'], PATHINFO_EXTENSION));
                 $allowed = ['jpg', 'jpeg', 'png', 'webp'];
@@ -138,6 +110,150 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'manag
                         $pdo->prepare("UPDATE teams SET logo_path = :logo WHERE team_id = :tid")->execute(['logo' => 'uploads/teams/' . $fileName, 'tid' => $teamId]);
                     }
                 }
+            }
+            $success = 'อัปเดตข้อมูลทั่วไปของทีมเรียบร้อยแล้ว!';
+        }
+    }
+}
+
+// 2.2 เพิ่มสมาชิกใหม่เข้าทีม (ส่งคำเชิญ)
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && (in_array($_POST['action'] ?? '', ['add_team_members', 'manage_team']))) {
+    if (!verifyCsrfToken($_POST['csrf_token'] ?? '')) {
+        $error = 'คำขอไม่ถูกต้อง';
+    } else {
+        $teamId = (int) $_POST['team_id'];
+        $chkCap = $pdo->prepare("SELECT * FROM teams WHERE team_id = :tid AND captain_player_id = :pid");
+        $chkCap->execute(['tid' => $teamId, 'pid' => $playerId]);
+        $teamData = $chkCap->fetch();
+
+        if (!$teamData) {
+            $error = 'คุณไม่มีสิทธิ์จัดการทีมนี้';
+        } else {
+            // กรณีเป็นการส่งฟอร์มรวมแบบเดิม
+            $teamNameInput = trim($_POST['team_name'] ?? '');
+            if (!empty($teamNameInput)) {
+                $pdo->prepare("UPDATE teams SET name = :name WHERE team_id = :tid")->execute(['name' => $teamNameInput, 'tid' => $teamId]);
+            }
+            if (isset($_FILES['team_logo']) && $_FILES['team_logo']['error'] === UPLOAD_ERR_OK) {
+                $ext = strtolower(pathinfo($_FILES['team_logo']['name'], PATHINFO_EXTENSION));
+                $allowed = ['jpg', 'jpeg', 'png', 'webp'];
+                if (in_array($ext, $allowed)) {
+                    $uploadDir = '../assets/uploads/teams/';
+                    if (!is_dir($uploadDir)) { mkdir($uploadDir, 0777, true); }
+                    $fileName = 'team_' . $teamId . '_' . time() . '.' . $ext;
+                    if (move_uploaded_file($_FILES['team_logo']['tmp_name'], $uploadDir . $fileName)) {
+                        $pdo->prepare("UPDATE teams SET logo_path = :logo WHERE team_id = :tid")->execute(['logo' => 'uploads/teams/' . $fileName, 'tid' => $teamId]);
+                    }
+                }
+            }
+
+            $invitedPlayerIds = $_POST['add_player_ids'] ?? [];
+            if (!is_array($invitedPlayerIds) && !empty($_POST['add_player_ids'])) {
+                $invitedPlayerIds = [(int)$_POST['add_player_ids']];
+            }
+
+            $role = trim($_POST['in_game_role'] ?? '');
+            $inviteCount = 0;
+
+            if (!empty($invitedPlayerIds)) {
+                foreach ($invitedPlayerIds as $addPlayerId) {
+                    $addPlayerId = (int) $addPlayerId;
+                    if ($addPlayerId <= 0 || $addPlayerId === $playerId) continue;
+
+                    $chkMem = $pdo->prepare("SELECT team_member_id FROM team_members WHERE team_id = :tid AND player_id = :pid");
+                    $chkMem->execute(['tid' => $teamId, 'pid' => $addPlayerId]);
+                    $existingMem = $chkMem->fetch();
+
+                    if (!$existingMem) {
+                        $pdo->prepare("INSERT INTO team_members (team_id, player_id, in_game_role, is_active) VALUES (:tid, :pid, :role, 0)")
+                            ->execute(['tid' => $teamId, 'pid' => $addPlayerId, 'role' => $role]);
+                        $inviteCount++;
+                    }
+                }
+                if ($inviteCount > 0) {
+                    $success = "ส่งคำเชิญเข้าร่วมทีมไปยังผู้เล่นจำนวน {$inviteCount} คนเรียบร้อยแล้ว!";
+                }
+            }
+        }
+    }
+}
+
+// 2.3 เปลี่ยนบทบาท/ตำแหน่ง & ตัวจริง/ตัวสำรอง ของสมาชิกในทีม
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'update_member_role') {
+    if (!verifyCsrfToken($_POST['csrf_token'] ?? '')) {
+        $error = 'คำขอไม่ถูกต้อง';
+    } else {
+        $teamId = (int) $_POST['team_id'];
+        $memberId = (int) $_POST['team_member_id'];
+        $newRole = trim($_POST['in_game_role'] ?? '');
+        $isSub = (int) ($_POST['is_substitute'] ?? 0);
+
+        $chkCap = $pdo->prepare("SELECT captain_player_id FROM teams WHERE team_id = :tid AND captain_player_id = :pid");
+        $chkCap->execute(['tid' => $teamId, 'pid' => $playerId]);
+
+        if (!$chkCap->fetch()) {
+            $error = 'คุณไม่มีสิทธิ์จัดการทีมนี้';
+        } else {
+            $pdo->prepare("UPDATE team_members SET in_game_role = :role, is_substitute = :is_sub WHERE team_member_id = :mid AND team_id = :tid")
+                ->execute(['role' => $newRole, 'is_sub' => $isSub, 'mid' => $memberId, 'tid' => $teamId]);
+            $success = 'อัปเดตบทบาท/ตำแหน่ง และสถานะตัวจริง/ตัวสำรองเรียบร้อยแล้ว!';
+        }
+    }
+}
+
+// 2.4 ลบสมาชิกออกจากทีม (Kick Member)
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'remove_member') {
+    if (!verifyCsrfToken($_POST['csrf_token'] ?? '')) {
+        $error = 'คำขอไม่ถูกต้อง';
+    } else {
+        $teamId = (int) $_POST['team_id'];
+        $memberId = (int) $_POST['team_member_id'];
+
+        $chkCap = $pdo->prepare("SELECT captain_player_id FROM teams WHERE team_id = :tid AND captain_player_id = :pid");
+        $chkCap->execute(['tid' => $teamId, 'pid' => $playerId]);
+
+        if (!$chkCap->fetch()) {
+            $error = 'คุณไม่มีสิทธิ์จัดการทีมนี้';
+        } else {
+            // ตรวจสอบว่าไม่ได้ลบกัปตันตัวเอง
+            $memCheck = $pdo->prepare("SELECT player_id FROM team_members WHERE team_member_id = :mid AND team_id = :tid");
+            $memCheck->execute(['mid' => $memberId, 'tid' => $teamId]);
+            $targetPid = (int) $memCheck->fetchColumn();
+
+            if ($targetPid === $playerId) {
+                $error = 'ไม่สามารถลบกัปตันทีมออกจากทีมได้ (กรุณาโอนสิทธิ์กัปตันก่อน)';
+            } else {
+                $pdo->prepare("DELETE FROM team_members WHERE team_member_id = :mid AND team_id = :tid")
+                    ->execute(['mid' => $memberId, 'tid' => $teamId]);
+                $success = 'ลบสมาชิกออกจากทีมเรียบร้อยแล้ว!';
+            }
+        }
+    }
+}
+
+// 2.5 โอนสิทธิ์กัปตันทีมให้สมาชิกคนอื่น
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'transfer_captain') {
+    if (!verifyCsrfToken($_POST['csrf_token'] ?? '')) {
+        $error = 'คำขอไม่ถูกต้อง';
+    } else {
+        $teamId = (int) $_POST['team_id'];
+        $newCaptainPlayerId = (int) $_POST['new_captain_player_id'];
+
+        $chkCap = $pdo->prepare("SELECT captain_player_id FROM teams WHERE team_id = :tid AND captain_player_id = :pid");
+        $chkCap->execute(['tid' => $teamId, 'pid' => $playerId]);
+
+        if (!$chkCap->fetch()) {
+            $error = 'คุณไม่มีสิทธิ์จัดการทีมนี้';
+        } else {
+            $chkMem = $pdo->prepare("SELECT 1 FROM team_members WHERE team_id = :tid AND player_id = :new_pid AND is_active = 1");
+            $chkMem->execute(['tid' => $teamId, 'new_pid' => $newCaptainPlayerId]);
+
+            if (!$chkMem->fetch()) {
+                $error = 'สามารถโอนสิทธิ์ให้เฉพาะสมาชิกตัวจริงที่อยู่ในทีมนี้เท่านั้น';
+            } else {
+                $pdo->prepare("UPDATE teams SET captain_player_id = :new_pid WHERE team_id = :tid")
+                    ->execute(['new_pid' => $newCaptainPlayerId, 'tid' => $teamId]);
+                $success = 'โอนสิทธิ์กัปตันทีมเรียบร้อยแล้ว!';
             }
         }
     }
@@ -212,18 +328,21 @@ if (count($myTeamIds) > 0) {
 }
 $winRate = $totalMatches > 0 ? round(($totalWins / $totalMatches) * 100, 1) : 0;
 
-// ดึงรายการสมัครทัวร์นาเมนต์
+// ดึงรายการสมัครทัวร์นาเมนต์ (ทั้งแบบทีมและแบบเดี่ยว)
 $registrations = $pdo->prepare("
-    SELECT tr.*, t.name AS tournament_name, t.venue_address, tm.name AS team_name, g.name AS game_name
+    SELECT DISTINCT tr.*, t.name AS tournament_name, t.venue_address, 
+           COALESCE(tm.name, p.display_name, 'ประเภทเดี่ยว') AS team_name, 
+           g.name AS game_name
     FROM tournament_registrations tr
     JOIN tournaments t ON t.tournament_id = tr.tournament_id
     JOIN games g ON g.game_id = t.game_id
-    JOIN teams tm ON tm.team_id = tr.team_id
-    JOIN team_members tm_mb ON tm_mb.team_id = tm.team_id
-    WHERE tm_mb.player_id = :pid AND tm_mb.is_active = 1
+    LEFT JOIN teams tm ON tm.team_id = tr.team_id
+    LEFT JOIN team_members tm_mb ON tm_mb.team_id = tm.team_id AND tm_mb.is_active = 1
+    LEFT JOIN players p ON p.player_id = tr.player_id
+    WHERE (tm_mb.player_id = :pid OR tr.player_id = :pid2)
     ORDER BY tr.registered_at DESC
 ");
-$registrations->execute(['pid' => $playerId]);
+$registrations->execute(['pid' => $playerId, 'pid2' => $playerId]);
 $myRegistrations = $registrations->fetchAll();
 
 // ดึงทีมที่สังกัด (ใช้ LEFT JOIN กับ games เพื่อป้องกันกรณีทีมกลางที่ไม่ได้ผูกเกมถูกซ่อน)
@@ -238,10 +357,98 @@ $teamsStmt = $pdo->prepare("
 $teamsStmt->execute(['pid' => $playerId, 'pid2' => $playerId]);
 $myTeams = $teamsStmt->fetchAll();
 
+// ================= 7. ดึงการแข่งขันที่กำลังดำเนินอยู่ & แมตช์นัดถัดไป (Active Tournaments & Live Next Matches) =================
+if (!function_exists('getRoundLabelProfile')) {
+    function getRoundLabelProfile($roundNum, $totalRounds = 4) {
+        $fromFinal = $totalRounds - $roundNum;
+        if ($fromFinal === 0) return '🏆 รอบชิงชนะเลิศ (Grand Finals)';
+        if ($fromFinal === 1) return '⚡ รอบรองชนะเลิศ (Semi-Finals)';
+        if ($fromFinal === 2) return '🔥 รอบก่อนรองชนะเลิศ (Quarter-Finals)';
+        if ($fromFinal === 3) return '⚔️ รอบ 16 ทีม (Round of 16)';
+        if ($fromFinal === 4) return '⚔️ รอบ 32 ทีม (Round of 32)';
+        return "รอบที่ $roundNum";
+    }
+}
+
+$activeTournamentsStmt = $pdo->prepare("
+    SELECT DISTINCT t.tournament_id, t.name AS tournament_name, t.status AS tournament_status,
+           t.start_date, t.end_date, t.venue_address,
+           g.name AS game_name, g.game_id,
+           COALESCE(tr.category, tm.team_category, 'open') AS team_category,
+           tm.team_id, tm.name AS team_name
+    FROM tournament_registrations tr
+    JOIN tournaments t ON t.tournament_id = tr.tournament_id
+    JOIN games g ON g.game_id = t.game_id
+    LEFT JOIN teams tm ON tm.team_id = tr.team_id
+    LEFT JOIN team_members tm_mb ON tm_mb.team_id = tm.team_id AND tm_mb.is_active = 1
+    WHERE (tm_mb.player_id = :pid OR tr.player_id = :pid2)
+      AND tr.status = 'approved'
+      AND t.status IN ('ongoing', 'registration_open')
+    ORDER BY t.start_date DESC
+");
+$activeTournamentsStmt->execute(['pid' => $playerId, 'pid2' => $playerId]);
+$activePlayerTournaments = $activeTournamentsStmt->fetchAll(PDO::FETCH_ASSOC);
+
+$liveTournamentsData = [];
+foreach ($activePlayerTournaments as $at) {
+    $tid = (int) $at['tournament_id'];
+    $teamId = (int) ($at['team_id'] ?? 0);
+    
+    // ตรวจสอบว่าทัวร์นาเมนต์นี้สร้างสายแข่งแล้วหรือไม่
+    $chkMatches = $pdo->prepare("SELECT COUNT(*) FROM matches WHERE tournament_id = :tid");
+    $chkMatches->execute(['tid' => $tid]);
+    $hasBracket = ($chkMatches->fetchColumn() > 0);
+
+    $tMatches = [];
+    if ($teamId > 0) {
+        $tmStmt = $pdo->prepare("
+            SELECT m.*, 
+                   t1.name AS t1_name, t2.name AS t2_name,
+                   (SELECT name FROM tournament_groups WHERE tournament_group_id = m.group_id) AS group_name
+            FROM matches m
+            LEFT JOIN teams t1 ON t1.team_id = m.team1_id
+            LEFT JOIN teams t2 ON t2.team_id = m.team2_id
+            WHERE m.tournament_id = :tid AND (m.team1_id = :team_id OR m.team2_id = :team_id)
+            ORDER BY m.round_number ASC, m.match_id ASC
+        ");
+        $tmStmt->execute(['tid' => $tid, 'team_id' => $teamId]);
+        $tMatches = $tmStmt->fetchAll(PDO::FETCH_ASSOC);
+    }
+    
+    // หากทัวร์นาเมนต์สร้างสายแข่งแล้ว แต่ทีมนี้ไม่มีแมตช์ในสาย (ไม่ได้ Check-in หรือไม่ได้ร่วมแข่ง) ให้ข้าม
+    if ($hasBracket && empty($tMatches)) {
+        continue;
+    }
+
+    $nextMatch = null;
+    $hasLost = false;
+    $completedMatches = [];
+    $currentRoundNum = 1;
+    
+    foreach ($tMatches as $m) {
+        if ($m['status'] === 'completed' || $m['status'] === 'walkover') {
+            $completedMatches[] = $m;
+            if ($m['winner_team_id'] != $teamId && empty($m['group_id'])) {
+                $hasLost = true;
+            }
+        } elseif ($nextMatch === null && in_array($m['status'], ['scheduled', 'in_progress', 'pending'])) {
+            $nextMatch = $m;
+            $currentRoundNum = $m['round_number'];
+        }
+    }
+    
+    $at['matches'] = $tMatches;
+    $at['completed_matches'] = $completedMatches;
+    $at['next_match'] = $nextMatch;
+    $at['has_lost'] = $hasLost;
+    $at['current_round_num'] = $currentRoundNum;
+    $liveTournamentsData[] = $at;
+}
+
 // ดึงรายชื่อผู้เล่นทั้งหมดสำหรับค้นหา
 $allPlayersStmt = $pdo->prepare("SELECT player_id, display_name FROM players WHERE player_id != :pid ORDER BY display_name");
 $allPlayersStmt->execute(['pid' => $playerId]);
-$allPlayers = $allPlayersStmt->fetchAll();
+$allPlayers = $allPlayersStmt->fetchAll(PDO::FETCH_ASSOC);
 
 $csrfToken = generateCsrfToken();
 ?>
@@ -475,6 +682,149 @@ $csrfToken = generateCsrfToken();
                         <?= !empty($bio) ? nl2br(htmlspecialchars($bio)) : '<span class="text-gray-500 italic">ยังไม่ได้ระบุประวัติส่วนตัว กดปุ่ม "แก้ไขโปรไฟล์ & รูปส่วนตัว" เพื่อเพิ่มผลงาน</span>' ?>
                     </div>
                 </div>
+            </section>
+
+            <!-- ================= LIVE TOURNAMENTS & NEXT MATCHES (กำลังแข่งรอบไหน เจอทีมอะไร) ================= -->
+            <section class="space-y-6">
+                <div class="flex items-center justify-between border-b border-white/15 pb-4">
+                    <div class="flex items-center gap-3">
+                        <div class="w-10 h-10 rounded-xl bg-brand-orange/20 border border-brand-orange/40 flex items-center justify-center text-brand-orange text-lg">
+                            <i class="fa-solid fa-fire"></i>
+                        </div>
+                        <div>
+                            <h2 class="text-xl font-bold font-display text-white uppercase">การแข่งขันที่กำลังดำเนินอยู่ & แมตช์นัดถัดไป (LIVE TOURNAMENTS)</h2>
+                            <p class="text-xs text-gray-400">ตรวจสอบสถานะการแข่งขัน รอบปัจจุบัน คู่ต่อสู้นัดถัดไป และวันเวลาที่ต้องลงแข่ง</p>
+                        </div>
+                    </div>
+                </div>
+
+                <?php if (empty($liveTournamentsData)): ?>
+                    <div class="glass-panel p-8 text-center text-gray-400 rounded-2xl text-xs">
+                        <i class="fa-solid fa-calendar-xmark text-3xl text-gray-500 mb-2 block"></i>
+                        ยังไม่มีทัวร์นาเมนต์ที่คุณกำลังเข้าร่วมแข่งขันในขณะนี้
+                    </div>
+                <?php else: ?>
+                    <div class="space-y-6">
+                        <?php foreach ($liveTournamentsData as $lt): 
+                            $nxt = $lt['next_match'];
+                            $tid = $lt['tournament_id'];
+                            $myTeamId = $lt['team_id'];
+                            $isEliminated = $lt['has_lost'];
+                            $cat = $lt['team_category'] ?? 'open';
+                        ?>
+                            <div class="glass-panel rounded-3xl p-6 border border-white/20 shadow-2xl space-y-5 relative overflow-hidden bg-white/5">
+                                <!-- Tournament Header -->
+                                <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-white/10 pb-4">
+                                    <div>
+                                        <div class="flex items-center gap-2">
+                                            <span class="px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider <?= $lt['tournament_status'] === 'ongoing' ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30' : 'bg-blue-500/20 text-blue-300 border border-blue-500/30' ?>">
+                                                <?= $lt['tournament_status'] === 'ongoing' ? '🔴 กำลังแข่งขัน (Ongoing)' : '🟡 เปิดรับสมัคร (Registration)' ?>
+                                            </span>
+                                            <span class="text-xs text-gray-300 font-semibold"><i class="fa-solid fa-gamepad text-brand-orange"></i> <?= htmlspecialchars($lt['game_name']); ?></span>
+                                            <span class="px-2 py-0.5 rounded text-[10px] font-bold bg-white/10 text-gray-300">สาย <?= htmlspecialchars($cat); ?></span>
+                                        </div>
+                                        <h3 class="text-xl font-bold font-display text-white mt-1.5">
+                                            <?= htmlspecialchars($lt['tournament_name']); ?>
+                                        </h3>
+                                    </div>
+
+                                    <div class="flex items-center gap-3">
+                                        <div class="text-right">
+                                            <span class="text-[10px] text-gray-400 block uppercase">ลงแข่งในนามทีม</span>
+                                            <span class="text-sm font-bold text-brand-orange"><?= htmlspecialchars($lt['team_name'] ?: 'บุคคลเดี่ยว'); ?></span>
+                                        </div>
+                                        <a href="tournament-detail.php?id=<?= $tid; ?>&category=<?= urlencode($cat); ?>&highlight=<?= $myTeamId; ?>" 
+                                           class="px-4 py-2 rounded-xl bg-brand-orange hover:bg-brand-glow text-white text-xs font-bold transition-all shadow-md flex items-center gap-1.5 whitespace-nowrap">
+                                            <i class="fa-solid fa-sitemap"></i> ดูสายแข่ง (Highlight ทีมฉัน)
+                                        </a>
+                                    </div>
+                                </div>
+
+                                <!-- NEXT MATCH CARD -->
+                                <div class="p-4 rounded-2xl bg-black/50 border border-white/10 space-y-3 shadow-inner">
+                                    <div class="flex items-center justify-between">
+                                        <span class="text-xs font-bold uppercase tracking-wider text-amber-400 flex items-center gap-1.5">
+                                            <i class="fa-solid fa-bolt text-brand-orange"></i> แมตช์การแข่งขันนัดถัดไป (NEXT MATCH)
+                                        </span>
+                                        <?php if ($isEliminated): ?>
+                                            <span class="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-rose-500/20 text-rose-300 border border-rose-500/30">สิ้นสุดเส้นทาง (ตกรอบแล้ว)</span>
+                                        <?php elseif ($nxt): ?>
+                                            <span class="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 animate-pulse">⚡ รอลงแข่งขัน</span>
+                                        <?php else: ?>
+                                            <span class="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-purple-500/20 text-purple-300 border border-purple-500/30">⏳ รอกำหนดคู่แข่งรอบต่อไป</span>
+                                        <?php endif; ?>
+                                    </div>
+
+                                    <?php if ($nxt): 
+                                        $opponentName = ($nxt['team1_id'] == $myTeamId) ? ($nxt['t2_name'] ?: 'รอผลผู้ชนะรอบก่อน') : ($nxt['t1_name'] ?: 'รอผลผู้ชนะรอบก่อน');
+                                    ?>
+                                        <div class="flex flex-col sm:flex-row items-center justify-between p-3.5 rounded-xl bg-white/5 border border-white/10 gap-3">
+                                            <div class="flex items-center gap-3">
+                                                <div class="w-12 h-12 rounded-xl bg-brand-orange/20 border border-brand-orange/40 flex items-center justify-center text-brand-orange font-display font-black text-base shrink-0">
+                                                    VS
+                                                </div>
+                                                <div>
+                                                    <div class="text-xs text-amber-300 font-bold">
+                                                        <?= getRoundLabelProfile($nxt['round_number'], 5); ?>
+                                                    </div>
+                                                    <div class="text-base font-bold text-white mt-0.5">
+                                                        คู่ต่อสู้: <span class="text-brand-orange font-black"><?= htmlspecialchars($opponentName); ?></span>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                            
+                                            <div class="text-right text-xs space-y-1">
+                                                <div class="text-gray-200 font-semibold">
+                                                    <i class="fa-regular fa-calendar text-brand-orange mr-1"></i>
+                                                    <?= $nxt['match_day'] ? 'Day ' . $nxt['match_day'] . ' - ' : '' ?>
+                                                    <?= $nxt['scheduled_at'] ? date('d/m/Y H:i น.', strtotime($nxt['scheduled_at'])) : 'รอกำหนดเวลา' ?>
+                                                </div>
+                                                <?php if (!empty($nxt['venue_station'])): ?>
+                                                    <div class="text-amber-300 font-bold"><i class="fa-solid fa-location-dot mr-1"></i> โซน/สนาม: <?= htmlspecialchars($nxt['venue_station']); ?></div>
+                                                <?php endif; ?>
+                                            </div>
+                                        </div>
+                                    <?php elseif (!$isEliminated): ?>
+                                        <div class="p-3.5 rounded-xl bg-white/5 border border-white/10 text-xs text-gray-300 flex items-center gap-2">
+                                            <i class="fa-solid fa-hourglass-half text-amber-400"></i> ผ่านเข้ารอบแล้ว กำลังรอผลสรุปคู่แข่งขันสายประกบเพื่อทราบทีมคู่แข่งรอบถัดไป
+                                        </div>
+                                    <?php endif; ?>
+                                </div>
+
+                                <!-- COMPETITION PATH -->
+                                <div class="space-y-2">
+                                    <span class="text-xs font-bold uppercase tracking-wider text-gray-400">
+                                        <i class="fa-solid fa-timeline text-brand-orange mr-1"></i> ประวัติเส้นทางการแข่งในรายการนี้ (Competition Path):
+                                    </span>
+                                    <?php if (empty($lt['completed_matches'])): ?>
+                                        <div class="text-xs text-gray-500 italic p-2">ยังไม่มีแมตช์ที่แข่งขันจบในรายการนี้</div>
+                                    <?php else: ?>
+                                        <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
+                                            <?php foreach ($lt['completed_matches'] as $cm): 
+                                                $isWinner = ($cm['winner_team_id'] == $myTeamId);
+                                                $oppName = ($cm['team1_id'] == $myTeamId) ? ($cm['t2_name'] ?: 'คู่แข่ง') : ($cm['t1_name'] ?: 'คู่แข่ง');
+                                                $myScore = ($cm['team1_id'] == $myTeamId) ? $cm['team1_score'] : $cm['team2_score'];
+                                                $oppScore = ($cm['team1_id'] == $myTeamId) ? $cm['team2_score'] : $cm['team1_score'];
+                                            ?>
+                                                <div class="p-2.5 rounded-xl border <?= $isWinner ? 'bg-emerald-500/10 border-emerald-500/30' : 'bg-rose-500/10 border-rose-500/30' ?> text-xs flex items-center justify-between">
+                                                    <div>
+                                                        <span class="font-bold block text-white"><?= getRoundLabelProfile($cm['round_number'], 5); ?></span>
+                                                        <span class="text-[11px] text-gray-300">vs <?= htmlspecialchars($oppName); ?></span>
+                                                    </div>
+                                                    <div class="text-right">
+                                                        <span class="px-2 py-0.5 rounded font-mono font-bold text-xs <?= $isWinner ? 'bg-emerald-500/20 text-emerald-300' : 'bg-rose-500/20 text-rose-300' ?>">
+                                                            <?= $isWinner ? 'ชนะ' : 'แพ้' ?> <?= $myScore ?> - <?= $oppScore ?>
+                                                        </span>
+                                                    </div>
+                                                </div>
+                                            <?php endforeach; ?>
+                                        </div>
+                                    <?php endif; ?>
+                                </div>
+                            </div>
+                        <?php endforeach; ?>
+                    </div>
+                <?php endif; ?>
             </section>
 
             <section class="space-y-6">
@@ -774,59 +1124,142 @@ $csrfToken = generateCsrfToken();
             </div>
         </div>
 
+        <!-- Modal จัดการทีมแบบครบวงจร (Manage Team Modal) -->
         <div id="manageTeamModal" class="fixed inset-0 z-50 bg-black/80 backdrop-blur-md hidden flex items-center justify-center p-4">
-            <div class="glass-panel max-w-xl w-full rounded-3xl p-6 border border-white/20 shadow-2xl space-y-4">
-                <div class="flex items-center justify-between border-b border-white/15 pb-3">
-                    <h3 class="text-lg font-bold font-display text-white uppercase flex items-center gap-2">
-                        <i class="fa-solid fa-users-gear text-brand-orange"></i> จัดการทีม <span id="modalTeamName" class="text-brand-orange"></span>
-                    </h3>
-                    <button onclick="toggleModal('manageTeamModal')" class="text-gray-400 hover:text-white text-lg cursor-pointer">
+            <div class="glass-panel max-w-2xl w-full rounded-3xl p-6 border border-white/20 shadow-2xl space-y-5 max-h-[90vh] overflow-y-auto">
+                <div class="flex items-center justify-between border-b border-white/15 pb-4">
+                    <div class="flex items-center gap-3">
+                        <div class="w-10 h-10 rounded-xl bg-brand-orange/20 border border-brand-orange/40 flex items-center justify-center text-brand-orange text-lg">
+                            <i class="fa-solid fa-users-gear"></i>
+                        </div>
+                        <div>
+                            <h3 class="text-lg font-bold font-display text-white uppercase flex items-center gap-2">
+                                จัดการทีม <span id="modalTeamName" class="text-brand-orange"></span>
+                            </h3>
+                            <p class="text-xs text-gray-400">แก้ไขข้อมูลทีม จัดการสมาชิก เปลี่ยนบทบาท และเพิ่มสมาชิกใหม่</p>
+                        </div>
+                    </div>
+                    <button onclick="toggleModal('manageTeamModal')" class="text-gray-400 hover:text-white text-xl cursor-pointer">
                         <i class="fa-solid fa-xmark"></i>
                     </button>
                 </div>
 
-                <form method="POST" enctype="multipart/form-data" class="space-y-4 pt-2">
-                    <input type="hidden" name="csrf_token" value="<?= $csrfToken ?>">
-                    <input type="hidden" name="action" value="manage_team">
-                    <input type="hidden" name="team_id" id="modalTeamId" value="">
+                <!-- Navigation Tabs -->
+                <div class="flex items-center gap-2 border-b border-white/10 pb-2">
+                    <button type="button" onclick="switchTeamTab('general')" id="tabBtn-general"
+                            class="px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 bg-brand-orange text-white">
+                        <i class="fa-solid fa-pen-to-square"></i> ข้อมูลทั่วไปของทีม
+                    </button>
+                    <button type="button" onclick="switchTeamTab('roster')" id="tabBtn-roster"
+                            class="px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 bg-white/10 text-gray-300 hover:bg-white/20">
+                        <i class="fa-solid fa-users"></i> สมาชิก & บทบาท (<span id="teamMemberCountBadge">0</span>)
+                    </button>
+                    <button type="button" onclick="switchTeamTab('add')" id="tabBtn-add"
+                            class="px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 bg-white/10 text-gray-300 hover:bg-white/20">
+                        <i class="fa-solid fa-user-plus"></i> เพิ่มสมาชิกใหม่
+                    </button>
+                </div>
 
-                    <div class="bg-black/40 p-4 rounded-2xl border border-white/10 space-y-3">
-                        <label class="block text-xs font-bold text-brand-orange uppercase">
-                            <i class="fa-solid fa-pen"></i> แก้ไขชื่อทีม & เปลี่ยนรูปโลโก้:
-                        </label>
-                        <input type="text" name="team_name" placeholder="ชื่อทีมใหม่..."
-                               class="w-full text-xs text-white bg-black/50 border border-white/20 rounded-xl p-2.5 focus:outline-none focus:border-brand-orange">
-                        <input type="file" name="team_logo" accept="image/*"
-                               class="w-full text-xs text-gray-300 bg-black/50 border border-white/20 rounded-xl p-2 focus:outline-none focus:border-brand-orange">
-                    </div>
+                <!-- Tab 1: ข้อมูลทั่วไปของทีม (General Info) -->
+                <div id="tabContent-general" class="space-y-4">
+                    <form method="POST" enctype="multipart/form-data" class="space-y-4">
+                        <input type="hidden" name="csrf_token" value="<?= $csrfToken ?>">
+                        <input type="hidden" name="action" value="manage_team_info">
+                        <input type="hidden" name="team_id" class="activeModalTeamId" value="">
 
-                    <div class="space-y-2 relative">
-                        <label class="block text-xs font-bold text-gray-300 uppercase">🔍 ค้นหาและเลือกผู้เล่นเข้าทีม (เลือกได้หลายคน):</label>
-                        
-                        <div class="relative">
-                            <input type="text" id="liveSearchInput" oninput="onSearchInput()" placeholder="พิมพ์ชื่อ Display Name เพื่อค้นหาผู้เล่น..." autocomplete="off"
-                                   class="w-full bg-black/50 border border-white/20 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-brand-orange pr-10">
-                            <i class="fa-solid fa-magnifying-glass absolute right-3.5 top-3 text-xs text-gray-400"></i>
+                        <div class="bg-black/40 p-4 rounded-2xl border border-white/10 space-y-4">
+                            <div>
+                                <label class="block text-xs font-bold text-gray-300 mb-1.5 uppercase">
+                                    <i class="fa-solid fa-font text-brand-orange mr-1"></i> ชื่อทีม (Team Name):
+                                </label>
+                                <input type="text" name="team_name" id="modalTeamNameInput" required
+                                       class="w-full text-sm text-white bg-black/50 border border-white/20 rounded-xl px-4 py-2.5 focus:outline-none focus:border-brand-orange font-bold">
+                            </div>
+
+                            <div>
+                                <label class="block text-xs font-bold text-gray-300 mb-1.5 uppercase">
+                                    <i class="fa-solid fa-image text-brand-orange mr-1"></i> โลโก้ทีม (Team Logo):
+                                </label>
+                                <div class="flex items-center gap-4">
+                                    <div id="modalTeamLogoPreview" class="w-14 h-14 rounded-2xl bg-black/60 border border-white/20 overflow-hidden flex items-center justify-center shrink-0">
+                                        <i class="fa-solid fa-shield text-2xl text-brand-orange"></i>
+                                    </div>
+                                    <div class="flex-1">
+                                        <input type="file" name="team_logo" accept="image/*"
+                                               class="w-full text-xs text-gray-300 bg-black/50 border border-white/20 rounded-xl p-2 focus:outline-none focus:border-brand-orange">
+                                        <span class="text-[11px] text-gray-400 mt-1 block">รองรับไฟล์ PNG, JPG, WEBP (สี่เหลี่ยมจัตุรัสจะสวยที่สุด)</span>
+                                    </div>
+                                </div>
+                            </div>
                         </div>
 
-                        <div id="searchResultsList" class="hidden absolute left-0 right-0 top-full mt-1 bg-slate-900 border border-white/20 rounded-2xl max-h-48 overflow-y-auto z-50 shadow-2xl divide-y divide-white/10"></div>
+                        <div class="flex items-center justify-end gap-3 pt-2">
+                            <button type="button" onclick="toggleModal('manageTeamModal')" class="px-4 py-2 rounded-xl bg-white/10 text-xs font-bold text-gray-300 hover:bg-white/20">ปิด</button>
+                            <button type="submit" class="px-6 py-2 rounded-xl bg-brand-orange hover:bg-brand-glow text-xs font-bold text-white shadow-md">
+                                <i class="fa-solid fa-floppy-disk mr-1"></i> บันทึกข้อมูลทั่วไป
+                            </button>
+                        </div>
+                    </form>
+                </div>
 
-                        <div id="selectedPlayersContainer" class="flex flex-wrap gap-2 pt-1 min-h-[36px]"></div>
-
-                        <input type="text" name="in_game_role" placeholder="กำหนดตำแหน่งในเกม (เช่น Carry, Support)" 
-                               class="w-full bg-black/50 border border-white/20 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-brand-orange mt-2">
-                    </div>
-
-                    <div class="flex items-center justify-end gap-3 pt-2 border-t border-white/10">
-                        <button type="button" onclick="toggleModal('manageTeamModal')" class="px-4 py-2 rounded-xl bg-white/10 text-xs font-bold text-gray-300 hover:bg-white/20">ยกเลิก</button>
-                        <button type="submit" class="px-6 py-2 rounded-xl bg-brand-orange hover:bg-brand-glow text-xs font-bold text-white shadow-md">
-                            บันทึก & ส่งคำเชิญทั้งหมด
+                <!-- Tab 2: รายชื่อสมาชิก & บทบาท & ลบสมาชิก (Roster & Role Management) -->
+                <div id="tabContent-roster" class="hidden space-y-4">
+                    <div class="flex items-center justify-between">
+                        <span class="text-xs text-gray-400">ตรวจสอบสมาชิก ปรับเปลี่ยนตำแหน่ง หรือโอนสิทธิ์กัปตันทีม</span>
+                        <button type="button" onclick="switchTeamTab('add')" class="text-xs font-bold text-brand-orange hover:underline flex items-center gap-1">
+                            <i class="fa-solid fa-plus"></i> เพิ่มสมาชิกเข้าทีม
                         </button>
                     </div>
-                </form>
+
+                    <div id="modalRosterList" class="space-y-3 max-h-80 overflow-y-auto pr-1 divide-y divide-white/5">
+                        <!-- รายชื่อสมาชิกจะถูก Render ผ่าน JavaScript -->
+                    </div>
+                </div>
+
+                <!-- Tab 3: เพิ่มสมาชิกใหม่ (Add New Members) -->
+                <div id="tabContent-add" class="hidden space-y-4">
+                    <form method="POST" class="space-y-4">
+                        <input type="hidden" name="csrf_token" value="<?= $csrfToken ?>">
+                        <input type="hidden" name="action" value="add_team_members">
+                        <input type="hidden" name="team_id" class="activeModalTeamId" value="">
+
+                        <div class="space-y-3 relative">
+                            <label class="block text-xs font-bold text-gray-300 uppercase">
+                                <i class="fa-solid fa-magnifying-glass text-brand-orange mr-1"></i> ค้นหาและเลือกผู้เล่นเข้าทีม:
+                            </label>
+                            
+                            <div class="relative">
+                                <input type="text" id="liveSearchInput" oninput="onSearchInput()" placeholder="พิมพ์ชื่อ Display Name เพื่อค้นหาผู้เล่น..." autocomplete="off"
+                                       class="w-full bg-black/50 border border-white/20 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-brand-orange pr-10">
+                                <i class="fa-solid fa-magnifying-glass absolute right-3.5 top-3 text-xs text-gray-400"></i>
+                            </div>
+
+                            <div id="searchResultsList" class="hidden absolute left-0 right-0 top-16 bg-slate-900 border border-white/20 rounded-2xl max-h-48 overflow-y-auto z-50 shadow-2xl divide-y divide-white/10"></div>
+
+                            <div class="bg-black/30 p-3 rounded-xl border border-white/10 min-h-[50px]">
+                                <div class="text-[11px] text-gray-400 mb-1.5 font-semibold">ผู้เล่นที่เลือกไว้สำหรับส่งคำเชิญ:</div>
+                                <div id="selectedPlayersContainer" class="flex flex-wrap gap-2"></div>
+                            </div>
+
+                            <div>
+                                <label class="block text-xs font-bold text-gray-300 uppercase mb-1">ตำแหน่งเริ่มต้นในเกม (In-Game Role):</label>
+                                <input type="text" name="in_game_role" placeholder="เช่น Carry, Mid, Jungle, Roamer, Support" 
+                                       class="w-full bg-black/50 border border-white/20 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-brand-orange">
+                            </div>
+                        </div>
+
+                        <div class="flex items-center justify-end gap-3 pt-2 border-t border-white/10">
+                            <button type="button" onclick="switchTeamTab('roster')" class="px-4 py-2 rounded-xl bg-white/10 text-xs font-bold text-gray-300 hover:bg-white/20">ย้อนกลับ</button>
+                            <button type="submit" class="px-6 py-2 rounded-xl bg-brand-orange hover:bg-brand-glow text-xs font-bold text-white shadow-md">
+                                <i class="fa-solid fa-paper-plane mr-1"></i> ส่งคำเชิญเข้าร่วมทีม
+                            </button>
+                        </div>
+                    </form>
+                </div>
             </div>
         </div>
 
+        <!-- Modal ดูรายชื่อทีมแบบรวดเร็ว (Quick Roster View) -->
         <div id="rosterModal" class="fixed inset-0 z-50 bg-black/80 backdrop-blur-md hidden flex items-center justify-center p-4">
             <div class="glass-panel max-w-lg w-full rounded-3xl p-6 border border-white/20 shadow-2xl space-y-4">
                 <div class="flex items-center justify-between border-b border-white/15 pb-3">
@@ -841,7 +1274,7 @@ $csrfToken = generateCsrfToken();
                 <div id="rosterListContainer" class="space-y-3 max-h-80 overflow-y-auto pr-1"></div>
 
                 <div class="text-right pt-2 border-t border-white/10">
-                    <button onclick="toggleModal('rosterModal')" class="px-5 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-xs font-bold text-white">ปิดหน้าต่าง</button>
+                    <button onclick="toggleModal('rosterModal')" class="px-5 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-xs font-bold text-white cursor-pointer">ปิดหน้าต่าง</button>
                 </div>
             </div>
         </div>
@@ -855,36 +1288,190 @@ $csrfToken = generateCsrfToken();
     </div>
 
     <script>
+        const currentLoggedInPlayerId = <?= $playerId ?>;
+        const csrfTokenValue = "<?= $csrfToken ?>";
+
         const teamRostersData = {
             <?php foreach ($myTeams as $t): ?>
                 <?php
                     $mStmt = $pdo->prepare("
-                        SELECT p.player_id, p.display_name, tm.in_game_role
+                        SELECT tm.team_member_id, tm.team_id, tm.player_id, tm.in_game_role, tm.is_active, tm.is_substitute,
+                               p.display_name, p.avatar_path, p.image_path,
+                               (t.captain_player_id = tm.player_id) AS is_captain
                         FROM team_members tm
                         JOIN players p ON p.player_id = tm.player_id
-                        WHERE tm.team_id = :tid AND tm.is_active = 1
+                        JOIN teams t ON t.team_id = tm.team_id
+                        WHERE tm.team_id = :tid
+                        ORDER BY (t.captain_player_id = tm.player_id) DESC, tm.is_active DESC, tm.is_substitute ASC, p.display_name ASC
                     ");
                     $mStmt->execute(['tid' => $t['team_id']]);
-                    $mList = $mStmt->fetchAll();
+                    $mList = $mStmt->fetchAll(PDO::FETCH_ASSOC);
                 ?>
                 "<?= $t['team_id'] ?>": <?= json_encode($mList) ?>,
             <?php endforeach; ?>
         };
 
+        const teamDetailsData = {
+            <?php foreach ($myTeams as $t): ?>
+                "<?= $t['team_id'] ?>": {
+                    "team_id": <?= $t['team_id'] ?>,
+                    "name": <?= json_encode($t['name']) ?>,
+                    "logo_path": <?= json_encode($t['logo_path']) ?>,
+                    "is_captain": <?= $t['is_captain'] ? 'true' : 'false' ?>
+                },
+            <?php endforeach; ?>
+        };
+
         const allPlayersData = <?= json_encode($allPlayers) ?>;
         let selectedPlayersMap = new Map();
+        let currentActiveTeamId = null;
 
         function toggleModal(modalId) {
             const modal = document.getElementById(modalId);
-            if (modal) { modal.classList.toggle('hidden'); }
+            if (!modal) return;
+            if (modal.classList.contains('hidden') || modal.style.display === 'none') {
+                modal.classList.remove('hidden');
+                modal.style.display = 'flex';
+            } else {
+                modal.classList.add('hidden');
+                modal.style.display = 'none';
+            }
+        }
+
+        function switchTeamTab(tabName) {
+            ['general', 'roster', 'add'].forEach(t => {
+                const content = document.getElementById(`tabContent-${t}`);
+                const btn = document.getElementById(`tabBtn-${t}`);
+                if (content && btn) {
+                    if (t === tabName) {
+                        content.classList.remove('hidden');
+                        btn.className = 'px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 bg-brand-orange text-white shadow-md';
+                    } else {
+                        content.classList.add('hidden');
+                        btn.className = 'px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 bg-white/10 text-gray-300 hover:bg-white/20';
+                    }
+                }
+            });
         }
 
         function openTeamModal(teamId, teamName) {
-            document.getElementById('modalTeamId').value = teamId;
-            document.getElementById('modalTeamName').innerText = '"' + teamName + '"';
+            currentActiveTeamId = teamId;
+            const team = teamDetailsData[teamId] || { name: teamName, logo_path: '' };
+
+            document.querySelectorAll('.activeModalTeamId').forEach(el => el.value = teamId);
+            document.getElementById('modalTeamName').innerText = '"' + team.name + '"';
+            document.getElementById('modalTeamNameInput').value = team.name;
+
+            const logoContainer = document.getElementById('modalTeamLogoPreview');
+            if (team.logo_path) {
+                logoContainer.innerHTML = `<img src="../assets/${escapeHtml(team.logo_path)}" class="w-full h-full object-cover">`;
+            } else {
+                logoContainer.innerHTML = `<i class="fa-solid fa-shield text-2xl text-brand-orange"></i>`;
+            }
+
+            renderModalRoster(teamId);
             selectedPlayersMap.clear();
             renderSelectedPlayersBadges();
+            switchTeamTab('general');
             toggleModal('manageTeamModal');
+        }
+
+        function renderModalRoster(teamId) {
+            const members = teamRostersData[teamId] || [];
+            const container = document.getElementById('modalRosterList');
+            const countBadge = document.getElementById('teamMemberCountBadge');
+            
+            countBadge.innerText = members.length;
+            container.innerHTML = '';
+
+            if (members.length === 0) {
+                container.innerHTML = '<div class="p-6 text-center text-gray-400 text-xs">ยังไม่มีสมาชิกในทีมนี้</div>';
+                return;
+            }
+
+            members.forEach(m => {
+                const row = document.createElement('div');
+                row.className = 'p-3.5 bg-black/40 rounded-2xl border border-white/10 flex flex-col md:flex-row items-start md:items-center justify-between gap-3';
+
+                let statusBadge = '';
+                if (m.is_captain == 1) {
+                    statusBadge = '<span class="px-2 py-0.5 rounded-full bg-brand-orange/20 text-brand-orange border border-brand-orange/40 text-[10px] font-bold shrink-0"><i class="fa-solid fa-crown mr-1"></i>กัปตันทีม</span>';
+                } else if (m.is_active == 1 && m.is_substitute == 0) {
+                    statusBadge = '<span class="px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 text-[10px] font-bold shrink-0"><i class="fa-solid fa-circle-check mr-1"></i>ตัวจริง</span>';
+                } else if (m.is_active == 1 && m.is_substitute == 1) {
+                    statusBadge = '<span class="px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/40 text-[10px] font-bold shrink-0"><i class="fa-solid fa-arrows-rotate mr-1"></i>ตัวสำรอง</span>';
+                } else {
+                    statusBadge = '<span class="px-2 py-0.5 rounded-full bg-slate-500/20 text-slate-300 border border-slate-500/40 text-[10px] font-bold shrink-0"><i class="fa-solid fa-clock mr-1"></i>รอตอบรับคำเชิญ</span>';
+                }
+
+                let avatarSrc = m.avatar_path || m.image_path;
+                let avatarHtml = avatarSrc ? 
+                    `<img src="../assets/${escapeHtml(avatarSrc)}" class="w-10 h-10 rounded-xl object-cover border border-white/15 shrink-0">` :
+                    `<div class="w-10 h-10 rounded-xl bg-white/10 flex items-center justify-center text-brand-orange font-bold text-xs shrink-0"><i class="fa-solid fa-user"></i></div>`;
+
+                row.innerHTML = `
+                    <div class="flex items-center gap-3">
+                        ${avatarHtml}
+                        <div>
+                            <div class="flex items-center gap-2 flex-wrap">
+                                <span class="text-xs font-bold text-white">${escapeHtml(m.display_name)}</span>
+                                ${statusBadge}
+                            </div>
+                            <span class="text-[11px] text-gray-400 block mt-0.5">บทบาท: <strong class="text-gray-200">${escapeHtml(m.in_game_role || '-')}</strong> (${m.is_substitute == 1 ? 'ตัวสำรอง' : 'ตัวจริง'})</span>
+                        </div>
+                    </div>
+
+                    <div class="flex items-center gap-2 w-full md:w-auto justify-end flex-wrap">
+                        <!-- ฟอร์มแก้ไขตำแหน่ง In-game Role & ตัวจริง/ตัวสำรอง -->
+                        <form method="POST" class="flex items-center gap-1.5">
+                            <input type="hidden" name="csrf_token" value="${csrfTokenValue}">
+                            <input type="hidden" name="action" value="update_member_role">
+                            <input type="hidden" name="team_id" value="${teamId}">
+                            <input type="hidden" name="team_member_id" value="${m.team_member_id}">
+                            
+                            <input type="text" name="in_game_role" value="${escapeHtml(m.in_game_role || '')}" placeholder="ตำแหน่ง เช่น Carry"
+                                   class="w-28 bg-black/60 border border-white/20 rounded-lg px-2 py-1 text-[11px] text-white focus:outline-none focus:border-brand-orange">
+                            
+                            <select name="is_substitute" class="bg-black/60 border border-white/20 rounded-lg px-2 py-1 text-[11px] text-white focus:outline-none focus:border-brand-orange">
+                                <option value="0" ${m.is_substitute == 0 ? 'selected' : ''}>ตัวจริง</option>
+                                <option value="1" ${m.is_substitute == 1 ? 'selected' : ''}>ตัวสำรอง</option>
+                            </select>
+
+                            <button type="submit" title="บันทึกตำแหน่ง & ตัวจริง/สำรอง" class="px-2.5 py-1 bg-white/10 hover:bg-white/20 border border-white/15 rounded-lg text-[11px] font-bold text-white cursor-pointer">
+                                <i class="fa-solid fa-check text-brand-orange"></i>
+                            </button>
+                        </form>
+
+                        ${m.is_captain != 1 && m.is_active == 1 ? `
+                            <!-- ปุ่มโอนสิทธิ์กัปตันทีม -->
+                            <form method="POST" onsubmit="return confirm('คุณต้องการโอนสิทธิ์กัปตันทีมให้ ${escapeHtml(m.display_name)} ใช่หรือไม่?')">
+                                <input type="hidden" name="csrf_token" value="${csrfTokenValue}">
+                                <input type="hidden" name="action" value="transfer_captain">
+                                <input type="hidden" name="team_id" value="${teamId}">
+                                <input type="hidden" name="new_captain_player_id" value="${m.player_id}">
+                                <button type="submit" title="โอนสิทธิ์กัปตันทีม" class="px-2.5 py-1 bg-amber-500/20 hover:bg-amber-500 text-amber-300 hover:text-white border border-amber-500/30 rounded-lg text-[11px] font-bold transition-all cursor-pointer">
+                                    <i class="fa-solid fa-crown"></i>
+                                </button>
+                            </form>
+                        ` : ''}
+
+                        ${m.is_captain != 1 ? `
+                            <!-- ปุ่มลบสมาชิกออกจากทีม -->
+                            <form method="POST" onsubmit="return confirm('คุณแน่ใจหรือไม่ที่จะลบ ${escapeHtml(m.display_name)} ออกจากทีม?')">
+                                <input type="hidden" name="csrf_token" value="${csrfTokenValue}">
+                                <input type="hidden" name="action" value="remove_member">
+                                <input type="hidden" name="team_id" value="${teamId}">
+                                <input type="hidden" name="team_member_id" value="${m.team_member_id}">
+                                <button type="submit" title="ลบสมาชิกออกจากทีม" class="px-2.5 py-1 bg-rose-500/20 hover:bg-rose-600 text-rose-300 hover:text-white border border-rose-500/30 rounded-lg text-[11px] font-bold transition-all cursor-pointer">
+                                    <i class="fa-solid fa-user-minus"></i>
+                                </button>
+                            </form>
+                        ` : ''}
+                    </div>
+                `;
+
+                container.appendChild(row);
+            });
         }
 
         function viewTeamRoster(teamId, teamName) {
@@ -895,24 +1482,29 @@ $csrfToken = generateCsrfToken();
             const members = teamRostersData[teamId] || [];
 
             if (members.length === 0) {
-                container.innerHTML = '<p class="text-xs text-gray-400 text-center py-4">ยังไม่มีสมาชิกที่ยืนยันการเข้าร่วมในทีมนี้</p>';
+                container.innerHTML = '<p class="text-xs text-gray-400 text-center py-4">ยังไม่มีสมาชิกในทีมนี้</p>';
             } else {
                 members.forEach(m => {
                     const item = document.createElement('div');
                     item.className = 'bg-black/40 p-3 rounded-xl border border-white/10 flex items-center justify-between';
                     
                     let roleTag = m.in_game_role ? `<span class="text-[10px] text-brand-orange bg-brand-orange/10 px-2 py-0.5 rounded border border-brand-orange/20 ml-2">${escapeHtml(m.in_game_role)}</span>` : '';
-                    
+                    let capTag = m.is_captain == 1 ? `<span class="text-[10px] text-brand-orange font-bold mr-1"><i class="fa-solid fa-crown mr-0.5"></i>Captain</span>` : '';
+
                     item.innerHTML = `
                         <div class="flex items-center gap-3">
                             <div class="w-8 h-8 rounded-lg bg-white/10 flex items-center justify-center text-brand-orange font-bold text-xs">
                                 <i class="fa-solid fa-user"></i>
                             </div>
                             <div>
-                                <span class="text-xs font-bold text-white">${escapeHtml(m.display_name)}</span>
+                                <div class="flex items-center">
+                                    ${capTag}
+                                    <span class="text-xs font-bold text-white">${escapeHtml(m.display_name)}</span>
+                                </div>
                                 ${roleTag}
                             </div>
                         </div>
+                        <span class="text-[10px] ${m.is_active == 1 ? 'text-emerald-400' : 'text-amber-400'}">${m.is_active == 1 ? 'ยืนยันแล้ว' : 'รอยืนยัน'}</span>
                     `;
                     container.appendChild(item);
                 });
@@ -923,7 +1515,7 @@ $csrfToken = generateCsrfToken();
 
         function escapeHtml(text) {
             if (!text) return '';
-            return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;");
+            return String(text).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;");
         }
 
         function onSearchInput() {
@@ -936,17 +1528,23 @@ $csrfToken = generateCsrfToken();
                 return;
             }
 
+            // กรองผู้เล่นที่อยู่ในทีมอยู่แล้วออกไปด้วย
+            const currentTeamMembers = (currentActiveTeamId && teamRostersData[currentActiveTeamId]) ? 
+                teamRostersData[currentActiveTeamId].map(m => m.player_id.toString()) : [];
+
             const filtered = allPlayersData.filter(p => 
-                p.display_name.toLowerCase().includes(query) && !selectedPlayersMap.has(p.player_id.toString())
+                p.display_name.toLowerCase().includes(query) && 
+                !selectedPlayersMap.has(p.player_id.toString()) &&
+                !currentTeamMembers.includes(p.player_id.toString())
             );
 
             if (filtered.length === 0) {
-                resultsBox.innerHTML = '<div class="p-3 text-xs text-gray-400 text-center">ไม่พบรายชื่อผู้เล่น หรือถูกเลือกไปแล้ว</div>';
+                resultsBox.innerHTML = '<div class="p-3 text-xs text-gray-400 text-center">ไม่พบรายชื่อผู้เล่น (หรือผู้เล่นอยู่ในทีม/ถูกเลือกแล้ว)</div>';
             } else {
                 filtered.forEach(p => {
                     const div = document.createElement('div');
                     div.className = 'p-3 hover:bg-brand-orange/20 cursor-pointer text-xs font-bold text-white transition-colors flex items-center justify-between';
-                    div.innerHTML = `<span><i class="fa-solid fa-user text-brand-orange mr-2"></i>${escapeHtml(p.display_name)}</span> <span class="text-[10px] text-brand-orange font-bold">+ เพิ่ม</span>`;
+                    div.innerHTML = `<span><i class="fa-solid fa-user text-brand-orange mr-2"></i>${escapeHtml(p.display_name)}</span> <span class="text-[10px] text-brand-orange font-bold">+ เลือก</span>`;
                     div.onclick = function() { addPlayerToSelection(p.player_id, p.display_name); };
                     resultsBox.appendChild(div);
                 });
@@ -978,10 +1576,10 @@ $csrfToken = generateCsrfToken();
 
             selectedPlayersMap.forEach((name, id) => {
                 const badge = document.createElement('div');
-                badge.className = 'bg-brand-orange/20 border border-brand-orange/40 px-3 py-1.5 rounded-xl flex items-center gap-2 text-xs text-white';
+                badge.className = 'bg-brand-orange/20 border border-brand-orange/40 px-3 py-1 rounded-xl flex items-center gap-2 text-xs text-white';
                 badge.innerHTML = `
                     <span class="font-bold"><i class="fa-solid fa-user-check text-brand-orange mr-1"></i>${escapeHtml(name)}</span>
-                    <button type="button" onclick="removeSelectedPlayer('${id}')" class="text-gray-400 hover:text-rose-400 ml-1">
+                    <button type="button" onclick="removeSelectedPlayer('${id}')" class="text-gray-400 hover:text-rose-400 ml-1 cursor-pointer">
                         <i class="fa-solid fa-xmark"></i>
                     </button>
                     <input type="hidden" name="add_player_ids[]" value="${id}">
@@ -993,6 +1591,7 @@ $csrfToken = generateCsrfToken();
         // Particles Canvas Engine
         document.addEventListener('DOMContentLoaded', () => {
             const canvas = document.getElementById('particles-canvas');
+            if (!canvas) return;
             const ctx = canvas.getContext('2d');
             
             let widthWin = canvas.width = window.innerWidth;

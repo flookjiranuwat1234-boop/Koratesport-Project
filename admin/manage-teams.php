@@ -118,28 +118,41 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $tourname
 // 2. อนุมัติคำขอสมัคร + สร้าง QR Code Token
 if (isset($_GET['approve']) && $tournamentId) {
     $regId = (int) $_GET['approve'];
+    $adminName = $_SESSION['username'] ?? 'Admin';
     
-    $regQuery = $pdo->prepare("SELECT team_id, player_id, qr_code_token FROM tournament_registrations WHERE tournament_registration_id = :id");
+    $regQuery = $pdo->prepare("SELECT team_id, player_id, qr_code_token, status, tournament_id FROM tournament_registrations WHERE tournament_registration_id = :id");
     $regQuery->execute(['id' => $regId]);
     $regData = $regQuery->fetch();
     $targetTeamId = $regData['team_id'] ?? null;
     $targetPlayerId = $regData['player_id'] ?? null;
     $existingToken = $regData['qr_code_token'] ?? '';
+    $oldStatus = $regData['status'] ?? 'pending';
 
     if (empty($existingToken)) {
         $qrToken = strtoupper(bin2hex(random_bytes(5)));
         $pdo->prepare("
             UPDATE tournament_registrations 
-            SET status = 'approved', qr_code_token = :qr_token 
+            SET status = 'approved', qr_code_token = :qr_token, updated_by_name = :ubn, updated_at = NOW() 
             WHERE tournament_registration_id = :id AND tournament_id = :tid
-        ")->execute(['qr_token' => $qrToken, 'id' => $regId, 'tid' => $tournamentId]);
+        ")->execute(['qr_token' => $qrToken, 'ubn' => $adminName, 'id' => $regId, 'tid' => $tournamentId]);
     } else {
         $pdo->prepare("
             UPDATE tournament_registrations 
-            SET status = 'approved' 
+            SET status = 'approved', updated_by_name = :ubn, updated_at = NOW() 
             WHERE tournament_registration_id = :id AND tournament_id = :tid
-        ")->execute(['id' => $regId, 'tid' => $tournamentId]);
+        ")->execute(['ubn' => $adminName, 'id' => $regId, 'tid' => $tournamentId]);
     }
+
+    // บันทึก Audit Log
+    try {
+        $pdo->prepare("
+            INSERT INTO registration_audit_logs (registration_id, tournament_id, team_id, player_id, old_status, new_status, changed_by_name, reason)
+            VALUES (:rid, :tid, :team_id, :pid, :old_st, 'approved', :cbn, 'อนุมัติการสมัครแข่งขัน')
+        ")->execute([
+            'rid' => $regId, 'tid' => $tournamentId, 'team_id' => $targetTeamId, 'pid' => $targetPlayerId,
+            'old_st' => $oldStatus, 'cbn' => $adminName
+        ]);
+    } catch (Exception $e) {}
 
     if ($targetTeamId) {
         $pdo->prepare("
@@ -161,15 +174,91 @@ if (isset($_GET['approve']) && $tournamentId) {
     $success = 'อนุมัติและออกรหัส QR Code สำหรับเช็คอินเรียบร้อยแล้ว';
 }
 
-// 3. ปฏิเสธคำขอสมัคร
+// 3. ปฏิเสธคำขอสมัคร (พร้อมบันทึก Audit Log)
 if (isset($_GET['reject']) && $tournamentId) {
     $regId = (int) $_GET['reject'];
-    $pdo->prepare("UPDATE tournament_registrations SET status = 'rejected' WHERE tournament_registration_id = :id AND tournament_id = :tid")
-        ->execute(['id' => $regId, 'tid' => $tournamentId]);
-    $success = 'ปฏิเสธคำขอเรียบร้อยแล้ว';
+    $adminName = $_SESSION['username'] ?? 'Admin';
+
+    $regQuery = $pdo->prepare("SELECT team_id, player_id, status, tournament_id FROM tournament_registrations WHERE tournament_registration_id = :id");
+    $regQuery->execute(['id' => $regId]);
+    $regData = $regQuery->fetch();
+    $oldStatus = $regData['status'] ?? 'pending';
+
+    $pdo->prepare("UPDATE tournament_registrations SET status = 'rejected', updated_by_name = :ubn, updated_at = NOW() WHERE tournament_registration_id = :id AND tournament_id = :tid")
+        ->execute(['ubn' => $adminName, 'id' => $regId, 'tid' => $tournamentId]);
+
+    // บันทึก Audit Log
+    try {
+        $pdo->prepare("
+            INSERT INTO registration_audit_logs (registration_id, tournament_id, team_id, player_id, old_status, new_status, changed_by_name, reason)
+            VALUES (:rid, :tid, :team_id, :pid, :old_st, 'rejected', :cbn, 'ปฏิเสธคำขอสมัคร')
+        ")->execute([
+            'rid' => $regId, 'tid' => $tournamentId, 'team_id' => $regData['team_id'] ?? null, 'pid' => $regData['player_id'] ?? null,
+            'old_st' => $oldStatus, 'cbn' => $adminName
+        ]);
+    } catch (Exception $e) {}
+
+    $success = 'ปฏิเสธคำขอเรียบร้อยแล้ว (สามารถกู้คืนหรือแก้ไขสถานะภายหลังได้ตลอดเวลา)';
 }
 
-// 4. เอาออกจากการแข่งขัน
+// 4. แก้ไขผลการอนุมัติ / เปลี่ยนสถานะ / เปลี่ยนประเภท (โดยไม่ต้องลบแล้วสมัครใหม่)
+if ($_SERVER['REQUEST_METHOD'] == 'POST' && ($_POST['action'] ?? '') === 'edit_registration') {
+    if (!verifyCsrfToken($_POST['csrf_token'] ?? '')) {
+        $error = 'คำขอไม่ถูกต้อง กรุณาลองใหม่';
+    } else {
+        $regId = (int) $_POST['reg_id'];
+        $newStatus = $_POST['status'] ?? 'pending';
+        $newCategory = $_POST['category'] ?? 'open';
+        $reason = trim($_POST['reason'] ?? '');
+        $adminName = $_SESSION['username'] ?? 'Admin';
+
+        $regQuery = $pdo->prepare("SELECT * FROM tournament_registrations WHERE tournament_registration_id = :id");
+        $regQuery->execute(['id' => $regId]);
+        $oldReg = $regQuery->fetch();
+
+        if ($oldReg) {
+            $oldStatus = $oldReg['status'];
+            $qrToken = $oldReg['qr_code_token'];
+            if ($newStatus === 'approved' && empty($qrToken)) {
+                $qrToken = strtoupper(bin2hex(random_bytes(5)));
+            }
+
+            $pdo->prepare("
+                UPDATE tournament_registrations 
+                SET status = :st, category = :cat, qr_code_token = :qr, admin_notes = :notes, updated_by_name = :ubn, updated_at = NOW()
+                WHERE tournament_registration_id = :id
+            ")->execute([
+                'st' => $newStatus,
+                'cat' => $newCategory,
+                'qr' => $qrToken,
+                'notes' => $reason ?: ($oldReg['admin_notes'] ?? null),
+                'ubn' => $adminName,
+                'id' => $regId
+            ]);
+
+            // บันทึก Audit Log
+            try {
+                $pdo->prepare("
+                    INSERT INTO registration_audit_logs (registration_id, tournament_id, team_id, player_id, old_status, new_status, changed_by_name, reason)
+                    VALUES (:rid, :tid, :team_id, :pid, :old_st, :new_st, :cbn, :reason)
+                ")->execute([
+                    'rid' => $regId,
+                    'tid' => $oldReg['tournament_id'],
+                    'team_id' => $oldReg['team_id'],
+                    'pid' => $oldReg['player_id'],
+                    'old_st' => $oldStatus,
+                    'new_st' => $newStatus,
+                    'cbn' => $adminName,
+                    'reason' => $reason ?: "แก้ไขสถานะจาก '{$oldStatus}' เป็น '{$newStatus}' (ประเภท: {$newCategory})"
+                ]);
+            } catch (Exception $e) {}
+
+            $success = "แก้ไขสถานะการสมัครเป็น '{$newStatus}' และบันทึกประวัติการแก้ไขเรียบร้อยแล้ว";
+        }
+    }
+}
+
+// 5. เอาออกจากการแข่งขัน
 if (isset($_GET['remove']) && $tournamentId) {
     $regId = (int) $_GET['remove'];
     $pdo->prepare("DELETE FROM tournament_registrations WHERE tournament_registration_id = :id AND tournament_id = :tid")
@@ -269,6 +358,44 @@ if ($tournament) {
         $availableStmt->execute(['tid' => $tournamentId]);
         $availableItems = $availableStmt->fetchAll();
     }
+
+    // ดึงรายการที่ถูกปฏิเสธ (Rejected Applications)
+    if ($isSolo) {
+        $rejectedStmt = $pdo->prepare("
+            SELECT tr.tournament_registration_id AS reg_id, p.player_id AS target_id, COALESCE(p.display_name, u.username, 'Unknown Player') AS name, 'open' AS team_category, tr.admin_notes, tr.updated_by_name, tr.updated_at
+            FROM tournament_registrations tr
+            JOIN players p ON p.player_id = tr.player_id
+            LEFT JOIN users u ON u.user_id = p.user_id
+            WHERE tr.tournament_id = :tid AND tr.status = 'rejected'
+            ORDER BY reg_id DESC
+        ");
+        $rejectedStmt->execute(['tid' => $tournamentId]);
+        $rejected = $rejectedStmt->fetchAll();
+    } else {
+        $rejectedStmt = $pdo->prepare("
+            SELECT tr.tournament_registration_id AS reg_id, t.team_id AS target_id, t.name, COALESCE(tr.category, t.team_category, 'open') AS team_category, tr.admin_notes, tr.updated_by_name, tr.updated_at
+            FROM tournament_registrations tr
+            JOIN teams t ON t.team_id = tr.team_id
+            WHERE tr.tournament_id = :tid AND tr.status = 'rejected'
+            ORDER BY reg_id DESC
+        ");
+        $rejectedStmt->execute(['tid' => $tournamentId]);
+        $rejected = $rejectedStmt->fetchAll();
+    }
+
+    // ดึงประวัติ Audit Logs ของทัวร์นาเมนต์นี้
+    $logsStmt = $pdo->prepare("
+        SELECT al.*, 
+               COALESCE(t.name, p.display_name, 'ไม่ระบุชื่อ') AS subject_name
+        FROM registration_audit_logs al
+        LEFT JOIN teams t ON t.team_id = al.team_id
+        LEFT JOIN players p ON p.player_id = al.player_id
+        WHERE al.tournament_id = :tid
+        ORDER BY al.created_at DESC
+        LIMIT 30
+    ");
+    $logsStmt->execute(['tid' => $tournamentId]);
+    $auditLogs = $logsStmt->fetchAll();
 }
 
 $csrfToken = generateCsrfToken();
@@ -664,10 +791,15 @@ $csrfToken = generateCsrfToken();
                                     <td class="p-4 text-center font-mono text-xs font-bold text-brand-orange">
                                         <?= htmlspecialchars($rowItem['qr_code_token']) ?>
                                     </td>
-                                    <td class="p-4 text-right">
+                                    <td class="p-4 text-right space-x-2 whitespace-nowrap">
+                                        <button type="button" 
+                                            onclick="openEditRegModal(<?= $rowItem['reg_id']; ?>, '<?= htmlspecialchars(addslashes($rowItem['name'])); ?>', 'approved', '<?= $rowItem['team_category'] ?? 'open'; ?>')"
+                                            class="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold transition-all cursor-pointer">
+                                            <i class="fa-solid fa-pen-to-square text-brand-orange"></i> แก้ไขผล/ประเภท
+                                        </button>
                                         <a href="?tournament_id=<?= $tournamentId ?>&category=<?php echo $filterCategory; ?>&remove=<?= $rowItem['reg_id'] ?>" 
                                            onclick="return confirm('ยืนยันที่จะลบรายการนี้ออกจากทัวร์นาเมนต์หรือไม่?')"
-                                           class="text-rose-600 font-bold text-xs hover:underline flex items-center justify-end gap-1">
+                                           class="inline-flex items-center gap-1 text-rose-600 font-bold text-xs hover:underline">
                                            <i class="fa-solid fa-trash"></i> เอาออก
                                         </a>
                                     </td>
@@ -678,10 +810,187 @@ $csrfToken = generateCsrfToken();
                     </div>
                 </div>
 
+                <!-- REJECTED APPLICATIONS SECTION -->
+                <?php if (!empty($rejected)): ?>
+                    <div class="bg-white rounded-2xl border border-rose-200 shadow-sm overflow-hidden space-y-4 mt-6">
+                        <div class="p-4 border-b border-rose-100 bg-rose-50/50 flex items-center justify-between">
+                            <h2 class="text-xs font-bold uppercase tracking-wider text-rose-700 flex items-center gap-2">
+                                <i class="fa-solid fa-circle-xmark text-rose-500"></i>
+                                รายการที่ถูกปฏิเสธ (REJECTED) (<?= count($rejected) ?> รายการ)
+                            </h2>
+                            <span class="text-[11px] text-slate-500 font-normal">สามารถกู้คืนหรือแก้ไขผลการสมัครได้ทันทีโดยไม่ต้องสมัครใหม่</span>
+                        </div>
+                        <div class="overflow-x-auto">
+                            <table class="w-full text-left text-sm text-slate-600">
+                                <thead class="bg-rose-100/40 text-xs uppercase font-bold text-slate-500 border-b border-rose-200">
+                                    <tr>
+                                        <th class="p-4">ลำดับ</th>
+                                        <th class="p-4"><?php echo $isSolo ? 'ชื่อผู้เล่น' : 'ชื่อทีม'; ?></th>
+                                        <?php if (!$isSolo): ?><th class="p-4 text-center">ประเภท</th><?php endif; ?>
+                                        <th class="p-4">เหตุผล / ผู้ปฏิเสธ</th>
+                                        <th class="p-4 text-right">การจัดการ</th>
+                                    </tr>
+                                </thead>
+                                <tbody class="divide-y divide-rose-100">
+                                    <?php $ridx = 1; foreach ($rejected as $rej): ?>
+                                    <tr class="hover:bg-rose-50/30 transition-colors">
+                                        <td class="p-4 text-xs font-mono font-bold text-slate-400">#<?= $ridx++; ?></td>
+                                        <td class="p-4 font-bold text-slate-900">
+                                            <?= htmlspecialchars(preg_replace('/\[.*\]/', '', $rej['name'])); ?>
+                                        </td>
+                                        <?php if (!$isSolo): ?>
+                                            <td class="p-4 text-center">
+                                                <span class="px-2 py-0.5 rounded text-xs bg-slate-100 text-slate-600 font-bold"><?= htmlspecialchars($rej['team_category'] ?? 'open'); ?></span>
+                                            </td>
+                                        <?php endif; ?>
+                                        <td class="p-4 text-xs">
+                                            <div class="text-rose-600 font-semibold"><?= htmlspecialchars($rej['admin_notes'] ?: 'ปฏิเสธคำขอ'); ?></div>
+                                            <div class="text-[10px] text-slate-400 mt-0.5">โดย: <?= htmlspecialchars($rej['updated_by_name'] ?: 'Admin'); ?> <?= $rej['updated_at'] ? '(' . date('d/m H:i', strtotime($rej['updated_at'])) . ')' : ''; ?></div>
+                                        </td>
+                                        <td class="p-4 text-right space-x-2 whitespace-nowrap">
+                                            <a href="?tournament_id=<?= $tournamentId ?>&category=<?= $filterCategory ?>&approve=<?= $rej['reg_id'] ?>"
+                                               onclick="return confirm('ต้องการกู้คืนและอนุมัติทีมนี้เข้าแข่งขันใช่หรือไม่?')"
+                                               class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition-all shadow-sm">
+                                                <i class="fa-solid fa-rotate-left"></i> กู้คืน / อนุมัติใหม่
+                                            </a>
+                                            <button type="button"
+                                                onclick="openEditRegModal(<?= $rej['reg_id']; ?>, '<?= htmlspecialchars(addslashes($rej['name'])); ?>', 'rejected', '<?= $rej['team_category'] ?? 'open'; ?>', '<?= htmlspecialchars(addslashes($rej['admin_notes'] ?? '')); ?>')"
+                                                class="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold transition-all cursor-pointer">
+                                                <i class="fa-solid fa-pen"></i> แก้ไข
+                                            </button>
+                                            <a href="?tournament_id=<?= $tournamentId ?>&category=<?= $filterCategory ?>&remove=<?= $rej['reg_id'] ?>" 
+                                               onclick="return confirm('ยืนยันที่จะลบรายการนี้ถาวรหรือไม่?')"
+                                               class="inline-flex items-center gap-1 text-rose-600 font-bold text-xs hover:underline">
+                                               <i class="fa-solid fa-trash"></i>
+                                            </a>
+                                        </td>
+                                    </tr>
+                                    <?php endforeach; ?>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                <?php endif; ?>
+
+                <!-- AUDIT LOGS SECTION -->
+                <?php if (!empty($auditLogs)): ?>
+                    <div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden space-y-4 mt-6">
+                        <div class="p-4 border-b border-slate-100 bg-slate-50/50 flex items-center justify-between">
+                            <h2 class="text-xs font-bold uppercase tracking-wider text-slate-700 flex items-center gap-2">
+                                <i class="fa-solid fa-clock-rotate-left text-brand-orange"></i>
+                                ประวัติการแก้ไขผลการอนุมัติ (REGISTRATION AUDIT LOGS) (<?= count($auditLogs) ?> รายการล่าสุด)
+                            </h2>
+                        </div>
+                        <div class="overflow-x-auto">
+                            <table class="w-full text-left text-xs text-slate-600">
+                                <thead class="bg-slate-100/50 uppercase font-bold text-slate-500 border-b border-slate-200">
+                                    <tr>
+                                        <th class="p-3">วันและเวลา</th>
+                                        <th class="p-3"><?php echo $isSolo ? 'ผู้เล่น' : 'ทีม'; ?></th>
+                                        <th class="p-3 text-center">การเปลี่ยนสถานะ</th>
+                                        <th class="p-3">ผู้ดำเนินการ</th>
+                                        <th class="p-3">เหตุผล / บันทึก</th>
+                                    </tr>
+                                </thead>
+                                <tbody class="divide-y divide-slate-100">
+                                    <?php foreach ($auditLogs as $log): ?>
+                                    <tr class="hover:bg-slate-50/80 transition-colors">
+                                        <td class="p-3 font-mono text-slate-400"><?= htmlspecialchars($log['created_at']); ?></td>
+                                        <td class="p-3 font-bold text-slate-900"><?= htmlspecialchars($log['subject_name']); ?></td>
+                                        <td class="p-3 text-center">
+                                            <span class="px-2 py-0.5 rounded bg-slate-100 text-slate-600 font-mono"><?= htmlspecialchars($log['old_status']); ?></span>
+                                            <i class="fa-solid fa-arrow-right text-[10px] text-slate-400 mx-1"></i>
+                                            <span class="px-2 py-0.5 rounded <?= $log['new_status'] === 'approved' ? 'bg-emerald-50 text-emerald-700 font-bold border border-emerald-200' : ($log['new_status'] === 'rejected' ? 'bg-rose-50 text-rose-700 font-bold border border-rose-200' : 'bg-amber-50 text-amber-700 font-bold border border-amber-200'); ?> font-mono">
+                                                <?= htmlspecialchars($log['new_status']); ?>
+                                            </span>
+                                        </td>
+                                        <td class="p-3 font-semibold text-slate-800"><i class="fa-solid fa-user-shield text-brand-orange mr-1"></i> <?= htmlspecialchars($log['changed_by_name']); ?></td>
+                                        <td class="p-3 text-slate-500"><?= htmlspecialchars($log['reason'] ?: '-'); ?></td>
+                                    </tr>
+                                    <?php endforeach; ?>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                <?php endif; ?>
+
             <?php endif; ?>
 
         </main>
     </div>
 
+    <!-- EDIT REGISTRATION MODAL -->
+    <div id="editRegModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 hidden items-center justify-center p-4">
+        <div class="bg-white rounded-2xl max-w-md w-full p-6 space-y-5 shadow-2xl border border-slate-100">
+            <div class="flex items-center justify-between border-b border-slate-100 pb-3">
+                <h3 class="text-base font-bold font-display text-slate-900 flex items-center gap-2">
+                    <i class="fa-solid fa-pen-to-square text-brand-orange"></i> แก้ไขผลและสถานะการสมัคร
+                </h3>
+                <button type="button" onclick="closeEditRegModal()" class="text-slate-400 hover:text-slate-600 p-1 cursor-pointer">
+                    <i class="fa-solid fa-xmark text-lg"></i>
+                </button>
+            </div>
+
+            <div id="editModalTargetName" class="text-sm font-bold text-slate-800 bg-slate-50 p-3 rounded-xl border border-slate-200 text-center truncate">
+            </div>
+
+            <form method="POST" class="space-y-4">
+                <input type="hidden" name="csrf_token" value="<?php echo $csrfToken; ?>">
+                <input type="hidden" name="action" value="edit_registration">
+                <input type="hidden" name="reg_id" id="edit_reg_id">
+
+                <div>
+                    <label class="block text-xs font-bold uppercase text-slate-700 tracking-wider mb-1.5">สถานะการสมัคร (Status)</label>
+                    <select name="status" id="edit_reg_status" class="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-sm font-semibold text-slate-900 focus:bg-white focus:outline-none focus:border-brand-orange">
+                        <option value="approved">🟢 ผ่านการอนุมัติ (Approved)</option>
+                        <option value="pending">🟡 รอการตรวจสอบ (Pending)</option>
+                        <option value="rejected">🔴 ปฏิเสธคำขอ (Rejected)</option>
+                    </select>
+                </div>
+
+                <?php if (!$isSolo): ?>
+                <div>
+                    <label class="block text-xs font-bold uppercase text-slate-700 tracking-wider mb-1.5">ประเภทสายการแข่งขัน (Category)</label>
+                    <select name="category" id="edit_reg_category" class="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-sm font-semibold text-slate-900 focus:bg-white focus:outline-none focus:border-brand-orange">
+                        <option value="open">Open (ทีมทั่วไป/ทีมผสม)</option>
+                        <option value="male">ทีมชาย (Male)</option>
+                        <option value="female">ทีมหญิง (Female)</option>
+                    </select>
+                </div>
+                <?php endif; ?>
+
+                <div>
+                    <label class="block text-xs font-bold uppercase text-slate-700 tracking-wider mb-1.5">เหตุผลการแก้ไข / หมายเหตุของแอดมิน (Admin Notes)</label>
+                    <textarea name="reason" id="edit_reg_reason" rows="2" placeholder="เช่น แก้ไขข้อมูลถูกต้องแล้ว, เอกสารไม่ครบถ้วน, เปลี่ยนสายตามคำร้อง"
+                        class="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-medium text-slate-900 focus:bg-white focus:outline-none focus:border-brand-orange"></textarea>
+                </div>
+
+                <div class="flex justify-end gap-2 pt-3 border-t border-slate-100">
+                    <button type="button" onclick="closeEditRegModal()" class="px-4 py-2 rounded-xl bg-slate-100 text-slate-700 font-semibold text-xs cursor-pointer">ยกเลิก</button>
+                    <button type="submit" class="px-4 py-2 rounded-xl bg-brand-orange hover:bg-brand-glow text-white font-bold text-xs uppercase tracking-wider cursor-pointer">บันทึกการแก้ไข</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <script>
+        function openEditRegModal(regId, targetName, status, category, reason) {
+            document.getElementById('edit_reg_id').value = regId;
+            document.getElementById('editModalTargetName').innerText = targetName || 'ผู้สมัคร/ทีม';
+            document.getElementById('edit_reg_status').value = status || 'pending';
+            if (document.getElementById('edit_reg_category')) {
+                document.getElementById('edit_reg_category').value = category || 'open';
+            }
+            document.getElementById('edit_reg_reason').value = reason || '';
+
+            document.getElementById('editRegModal').classList.remove('hidden');
+            document.getElementById('editRegModal').classList.add('flex');
+        }
+
+        function closeEditRegModal() {
+            document.getElementById('editRegModal').classList.add('hidden');
+            document.getElementById('editRegModal').classList.remove('flex');
+        }
+    </script>
 </body>
 </html>

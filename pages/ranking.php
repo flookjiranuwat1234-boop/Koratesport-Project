@@ -27,65 +27,103 @@ foreach ($rawGames as $g) {
 
 $gameId = isset($_GET['game_id']) ? (int)$_GET['game_id'] : (!empty($games) ? $games[0]['game_id'] : 0);
 $type = isset($_GET['type']) && $_GET['type'] === 'player' ? 'player' : 'team';
-$category = isset($_GET['category']) ? $_GET['category'] : 'open';
+$category = isset($_GET['category']) ? $_GET['category'] : 'all';
 $search = trim($_GET['search'] ?? '');
 
 $rankings = [];
 
 if ($type === 'team') {
     if ($gameId > 0) {
-        // ดึงข้อมูลจากตาราง team_rankings และกรองตาม category ที่เลือก
-        $sql = "
-            SELECT tr.*, t.name AS team_name, t.logo_path, tr.category AS team_category,
-                   COALESCE(tr.points, 0) AS total_points, 
-                   COALESCE(tr.matches_played, 0) AS matches_played, 
-                   COALESCE(tr.wins, 0) AS wins, 
-                   COALESCE(tr.losses, 0) AS losses
-            FROM team_rankings tr
-            JOIN teams t ON t.team_id = tr.team_id
-            WHERE tr.game_id = :game_id
-        ";
-        $params = ['game_id' => $gameId];
+        try {
+            // ดึงเฉพาะทีมที่เคยสมัครแข่งขัน (tournament_registrations) ในเกมนี้จริง
+            $sql = "
+                SELECT 
+                    t.team_id,
+                    t.name AS team_name,
+                    t.logo_path,
+                    COALESCE(MAX(tr_reg.category), MAX(tr.category), t.category, 'open') AS team_category,
+                    COALESCE(MAX(tr.points), 0) AS total_points, 
+                    COALESCE(MAX(tr.matches_played), 0) AS matches_played, 
+                    COALESCE(MAX(tr.wins), 0) AS wins, 
+                    COALESCE(MAX(tr.losses), 0) AS losses,
+                    COALESCE(MAX(tr.win_rate), 0) AS win_rate,
+                    COALESCE(MAX(tr.podium_finishes), 0) AS podium_finishes,
+                    COALESCE(MAX(tr.tournaments_played), 0) AS tournaments_played
+                FROM teams t
+                JOIN tournament_registrations tr_reg ON tr_reg.team_id = t.team_id AND tr_reg.status = 'approved'
+                JOIN tournaments tour ON tour.tournament_id = tr_reg.tournament_id
+                LEFT JOIN team_rankings tr ON tr.team_id = t.team_id AND tr.game_id = tour.game_id
+                WHERE tour.game_id = :game_id
+            ";
+            $params = ['game_id' => $gameId];
 
-        if ($category !== 'all' && !empty($category)) {
-            $sql .= " AND tr.category = :category";
-            $params['category'] = $category;
+            if ($category !== 'all' && !empty($category)) {
+                $sql .= " AND (tr_reg.category = :category OR tr.category = :category OR t.category = :category)";
+                $params['category'] = $category;
+            }
+
+            if ($search !== '') {
+                $sql .= " AND t.name LIKE :search";
+                $params['search'] = "%{$search}%";
+            }
+
+            $sql .= " GROUP BY t.team_id ORDER BY total_points DESC, win_rate DESC, podium_finishes DESC, wins DESC, matches_played DESC, t.name ASC";
+            $stmt = $pdo->prepare($sql);
+            $stmt->execute($params);
+            $rankings = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        } catch (Exception $e) {
+            $rankings = [];
         }
-
-        if ($search !== '') {
-            $sql .= " AND t.name LIKE :search";
-            $params['search'] = "%{$search}%";
-        }
-
-        $sql .= " GROUP BY tr.team_id ORDER BY total_points DESC, wins DESC";
-        $stmt = $pdo->prepare($sql);
-        $stmt->execute($params);
-        $rankings = $stmt->fetchAll(PDO::FETCH_ASSOC);
     }
 } else {
-    // โหมดอันดับผู้เล่น (ตัด pr.category ออกเพื่อป้องกัน Error)
+    // โหมดอันดับผู้เล่น ดึงเฉพาะผู้เล่นที่สมัครแข่งขันจริงในเกมนี้
     if ($gameId > 0) {
-        $sql = "
-            SELECT pr.*, p.display_name, p.avatar_path,
-                   COALESCE(pr.points, 0) AS total_points, 
-                   COALESCE(pr.matches_played, 0) AS matches_played, 
-                   COALESCE(pr.wins, 0) AS wins, 
-                   COALESCE(pr.losses, 0) AS losses
-            FROM player_rankings pr
-            JOIN players p ON p.player_id = pr.player_id
-            WHERE pr.game_id = :game_id
-        ";
-        $params = ['game_id' => $gameId];
+        try {
+            $sql = "
+                SELECT 
+                    p.player_id,
+                    p.display_name,
+                    p.avatar_path,
+                    COALESCE(MAX(tr_reg.category), MAX(pr.category), p.category, 'open') AS player_category,
+                    COALESCE(MAX(pr.points), 0) AS total_points, 
+                    COALESCE(MAX(pr.matches_played), 0) AS matches_played, 
+                    COALESCE(MAX(pr.wins), 0) AS wins, 
+                    COALESCE(MAX(pr.losses), 0) AS losses,
+                    COALESCE(MAX(pr.win_rate), 0) AS win_rate,
+                    COALESCE(MAX(pr.podium_finishes), 0) AS podium_finishes,
+                    COALESCE(MAX(pr.tournaments_played), 0) AS tournaments_played
+                FROM players p
+                JOIN (
+                    SELECT player_id, tournament_id, category FROM tournament_registrations WHERE player_id IS NOT NULL AND status = 'approved'
+                    UNION
+                    SELECT tm.player_id, tr.tournament_id, tr.category 
+                    FROM tournament_registrations tr 
+                    JOIN team_members tm ON tm.team_id = tr.team_id
+                    WHERE tr.status = 'approved'
+                ) tr_reg ON tr_reg.player_id = p.player_id
+                JOIN tournaments tour ON tour.tournament_id = tr_reg.tournament_id
+                LEFT JOIN player_rankings pr ON pr.player_id = p.player_id AND pr.game_id = tour.game_id
+                WHERE tour.game_id = :game_id
+            ";
+            $params = ['game_id' => $gameId];
 
-        if ($search !== '') {
-            $sql .= " AND p.display_name LIKE :search";
-            $params['search'] = "%{$search}%";
+            if ($category !== 'all' && !empty($category)) {
+                $sql .= " AND (tr_reg.category = :category OR pr.category = :category OR p.category = :category)";
+                $params['category'] = $category;
+            }
+
+            if ($search !== '') {
+                $sql .= " AND p.display_name LIKE :search";
+                $params['search'] = "%{$search}%";
+            }
+
+            $sql .= " GROUP BY p.player_id ORDER BY total_points DESC, win_rate DESC, podium_finishes DESC, wins DESC, matches_played DESC, p.display_name ASC";
+            $stmt = $pdo->prepare($sql);
+            $stmt->execute($params);
+            $rankings = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        } catch (Exception $e) {
+            $rankings = [];
         }
-
-        $sql .= " GROUP BY pr.player_id ORDER BY total_points DESC, wins DESC";
-        $stmt = $pdo->prepare($sql);
-        $stmt->execute($params);
-        $rankings = $stmt->fetchAll(PDO::FETCH_ASSOC);
     }
 }
 ?>
@@ -337,6 +375,7 @@ if ($type === 'team') {
             <?php if ($type === 'team'): ?>
                 <div class="glass-panel px-6 py-3 rounded-2xl flex flex-wrap items-center gap-2 border border-white/10">
                     <span class="text-xs font-bold text-gray-400 uppercase mr-3"><i class="fa-solid fa-filter text-brand-orange mr-1"></i> กรองประเภท:</span>
+                    <a href="?game_id=<?= $gameId ?>&type=team&category=all" class="px-4 py-1.5 rounded-xl text-xs font-bold transition-all <?= ($category === 'all') ? 'bg-brand-orange text-white shadow-md' : 'bg-white/10 text-gray-300 hover:bg-white/20' ?>">ทั้งหมด</a>
                     <a href="?game_id=<?= $gameId ?>&type=team&category=open" class="px-4 py-1.5 rounded-xl text-xs font-bold transition-all <?= ($category === 'open') ? 'bg-brand-orange text-white shadow-md' : 'bg-white/10 text-gray-300 hover:bg-white/20' ?>">Open</a>
                     <a href="?game_id=<?= $gameId ?>&type=team&category=male" class="px-4 py-1.5 rounded-xl text-xs font-bold transition-all <?= ($category === 'male') ? 'bg-brand-orange text-white shadow-md' : 'bg-white/10 text-gray-300 hover:bg-white/20' ?>">ทีมชาย</a>
                     <a href="?game_id=<?= $gameId ?>&type=team&category=female" class="px-4 py-1.5 rounded-xl text-xs font-bold transition-all <?= ($category === 'female') ? 'bg-brand-orange text-white shadow-md' : 'bg-white/10 text-gray-300 hover:bg-white/20' ?>">ทีมหญิง</a>
@@ -447,30 +486,34 @@ if ($type === 'team') {
                             <?php if (empty($rankings)): ?>
                                 <tr>
                                     <td colspan="7" class="p-10 text-center text-gray-400 font-normal">
-                                        ยังไม่มีข้อมูลตารางคะแนนในเกมหรือหมวดหมู่นี้
-                                    </td>
-                                </tr>
-                            <?php elseif (count($rankings) <= 3): ?>
-                                <tr id="noMoreRankingRow">
-                                    <td colspan="7" class="p-10 text-center text-gray-400 font-normal">
-                                        แสดงอันดับครบถ้วนในโซน Podium ด้านบนแล้ว
+                                        ยังไม่มีข้อมูลผู้สมัครแข่งขันในเกมหรือหมวดหมู่นี้
                                     </td>
                                 </tr>
                             <?php else: ?>
-                                <?php foreach (array_slice($rankings, 3) as $index => $r):
-                                    $actualRank = $index + 4;
+                                <?php foreach ($rankings as $index => $r):
+                                    $actualRank = $index + 1;
                                     $totalMatches = (int) $r['matches_played'];
                                     $wins = (int) $r['wins'];
                                     $winRate = $totalMatches > 0 ? round(($wins / $totalMatches) * 100, 1) : 0;
                                     $name = ($type == 'team') ? $r['team_name'] : $r['display_name'];
                                     $rowLink = ($type == 'team') ? 'team-profile.php?id=' . $r['team_id'] : 'player-profile.php?id=' . $r['player_id'];
                                     $staggerDelay = min($index * 30, 900);
+                                    
+                                    $rankBadgeClass = 'text-gray-400 font-bold';
+                                    if ($actualRank === 1) $rankBadgeClass = 'text-amber-400 font-black text-lg';
+                                    elseif ($actualRank === 2) $rankBadgeClass = 'text-slate-300 font-black text-lg';
+                                    elseif ($actualRank === 3) $rankBadgeClass = 'text-amber-600 font-black text-lg';
                                 ?>
                                     <tr class="ranking-row cursor-pointer"
                                         style="animation-delay: <?php echo $staggerDelay; ?>ms;"
                                         onclick="window.location='<?php echo $rowLink; ?>'"
                                         data-search-name="<?php echo strtolower(htmlspecialchars($name)); ?>">
-                                        <td class="p-5 text-center font-display font-bold text-gray-400 text-sm">#<?php echo $actualRank; ?></td>
+                                        <td class="p-5 text-center font-display text-sm <?php echo $rankBadgeClass; ?>">
+                                            <?php if ($actualRank === 1): ?>
+                                                <i class="fa-solid fa-crown text-amber-400 mr-1"></i>
+                                            <?php endif; ?>
+                                            #<?php echo $actualRank; ?>
+                                        </td>
                                         <td class="p-5 font-bold text-white text-base">
                                             <div class="flex items-center gap-3">
                                                 <?php if ($type == 'team'): ?>
@@ -482,7 +525,14 @@ if ($type === 'team') {
                                                         <i class="fa-solid fa-user text-xs"></i>
                                                     </div>
                                                 <?php endif; ?>
-                                                <span class="hover:text-brand-orange transition-colors"><?php echo htmlspecialchars($name); ?></span>
+                                                <span class="hover:text-brand-orange transition-colors flex items-center gap-1.5">
+                                                    <?php echo htmlspecialchars($name); ?>
+                                                    <?php if (!empty($r['podium_finishes'])): ?>
+                                                        <span class="px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 text-[10px] font-bold border border-amber-500/30" title="ได้ Top 3 รวม <?= $r['podium_finishes']; ?> ครั้ง">
+                                                            🏆 <?= $r['podium_finishes']; ?>
+                                                        </span>
+                                                    <?php endif; ?>
+                                                </span>
                                             </div>
                                         </td>
                                         <?php if ($type === 'team'): ?>

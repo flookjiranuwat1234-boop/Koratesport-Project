@@ -18,18 +18,19 @@ function generateRoundRobin($pdo, $tournamentId)
     $tStmt->execute(['tid' => $tournamentId]);
     $tournament = $tStmt->fetch();
 
-    // ดึงทีมที่อนุมัติแล้ว เรียงตามวันที่สมัคร (ไม่ต้อง seed ตามคะแนนเหมือน bracket
-    // เพราะ round robin ทุกทีมเจอกันหมดอยู่แล้ว ลำดับก่อนหลังไม่มีผล)
+    // ดึงทีมที่ Check-in ผ่านแล้ว เรียงตามวันที่สมัคร
     $teamsStmt = $pdo->prepare("
         SELECT team_id FROM tournament_registrations
-        WHERE tournament_id = :tid AND status = 'approved'
+        WHERE tournament_id = :tid 
+          AND status NOT IN ('rejected', 'withdrawn', 'walkover', 'disqualified')
+          AND (checkin_status IN ('checked_in', 'qualified') OR status = 'qualified')
         ORDER BY registered_at
     ");
     $teamsStmt->execute(['tid' => $tournamentId]);
     $teamIds = $teamsStmt->fetchAll(PDO::FETCH_COLUMN);
 
     if (count($teamIds) < 2) {
-        throw new Exception("ต้องมีทีมที่อนุมัติแล้วอย่างน้อย 2 ทีม");
+        throw new Exception("ต้องมีทีมที่ Check-in แล้วอย่างน้อย 2 ทีม");
     }
 
     // แบ่งกลุ่ม ถ้าเป็น round_robin ธรรมดาถือเป็นกลุ่มเดียว

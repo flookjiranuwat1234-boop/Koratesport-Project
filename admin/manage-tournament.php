@@ -140,38 +140,29 @@ try {
     if (!in_array('registration_start', $cols)) { $pdo->exec("ALTER TABLE tournaments ADD COLUMN registration_start DATETIME NULL AFTER description"); }
     if (!in_array('registration_end', $cols)) { $pdo->exec("ALTER TABLE tournaments ADD COLUMN registration_end DATETIME NULL AFTER registration_start"); }
     if (!in_array('start_date', $cols)) { $pdo->exec("ALTER TABLE tournaments ADD COLUMN start_date DATETIME NULL AFTER registration_end"); }
+    if (!in_array('end_date', $cols)) { $pdo->exec("ALTER TABLE tournaments ADD COLUMN end_date DATETIME NULL AFTER start_date"); }
 
     $defaultGames = [
-        'Arena of Valor (RoV) - รุ่นอายุต่ำกว่า 18 ปี',
-        'Arena of Valor (RoV) - รุ่น Open',
-        'Free Fire - รุ่น Open',
-        'Tekken 8 - รุ่น Open',
-        'Street Fighter 6 - รุ่น Open',
-        'Efootball Mobile - รุ่น Open',
-        'Roblox - รุ่นอายุ 8-12 ปี'
+        ['name' => 'Arena of Valor (RoV) - รุ่นอายุต่ำกว่า 18 ปี', 'slug' => 'rov-u18', 'play_mode' => 'team'],
+        ['name' => 'Arena of Valor (RoV) - รุ่น Open', 'slug' => 'rov-open', 'play_mode' => 'team'],
+        ['name' => 'Free Fire - รุ่น Open', 'slug' => 'free-fire-open', 'play_mode' => 'team'],
+        ['name' => 'Tekken 8 - รุ่น Open', 'slug' => 'tekken-8-open', 'play_mode' => 'solo'],
+        ['name' => 'Street Fighter 6 - รุ่น Open', 'slug' => 'street-fighter-6-open', 'play_mode' => 'solo'],
+        ['name' => 'Efootball Mobile - รุ่น Open', 'slug' => 'efootball-mobile-open', 'play_mode' => 'solo'],
+        ['name' => 'Roblox - รุ่นอายุ 8-12 ปี', 'slug' => 'roblox-8-12', 'play_mode' => 'solo'],
     ];
-    $checkCol = $pdo->query("SHOW COLUMNS FROM games LIKE 'is_active'")->fetch();
-    foreach ($defaultGames as $gName) {
-        $chk = $pdo->prepare("SELECT game_id FROM games WHERE name = ?");
-        $chk->execute([$gName]);
+
+    foreach ($defaultGames as $dg) {
+        $chk = $pdo->prepare("SELECT game_id FROM games WHERE name = ? OR slug = ?");
+        $chk->execute([$dg['name'], $dg['slug']]);
         if (!$chk->fetch()) {
-            if ($checkCol) {
-                $pdo->prepare("INSERT INTO games (name, is_active) VALUES (?, 1)")->execute([$gName]);
-            } else {
-                $pdo->prepare("INSERT INTO games (name) VALUES (?)")->execute([$gName]);
-            }
+            $pdo->prepare("INSERT INTO games (name, slug, play_mode, is_active) VALUES (?, ?, ?, 1)")
+                ->execute([$dg['name'], $dg['slug'], $dg['play_mode']]);
         }
     }
 } catch (Exception $e) { }
 
-$games = $pdo->query("SELECT game_id, name FROM games")->fetchAll(PDO::FETCH_ASSOC);
-
-function getGameId($games_array, $game_name) {
-    foreach($games_array as $g) {
-        if (trim($g['name']) == trim($game_name)) return $g['game_id'];
-    }
-    return '';
-}
+$games = $pdo->query("SELECT game_id, name, play_mode FROM games WHERE is_active = 1 ORDER BY play_mode DESC, name ASC")->fetchAll(PDO::FETCH_ASSOC);
 
 function uploadTournamentImage($file) {
     if (isset($file) && $file['error'] == UPLOAD_ERR_OK) {
@@ -207,6 +198,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && ($_POST['action'] ?? '') == 'create'
         $regStart = !empty($_POST['registration_start']) ? $_POST['registration_start'] : null;
         $regEnd = !empty($_POST['registration_end']) ? $_POST['registration_end'] : null;
         $startDate = !empty($_POST['start_date']) ? $_POST['start_date'] : null;
+        $endDate = !empty($_POST['end_date']) ? $_POST['end_date'] : null;
 
         $imagePath = uploadTournamentImage($_FILES['tournament_image'] ?? null);
 
@@ -224,16 +216,18 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && ($_POST['action'] ?? '') == 'create'
             $error = 'วันปิดรับสมัครต้องอยู่หลังวันเปิดรับสมัคร';
         } elseif (strtotime($regEnd) > strtotime($startDate)) {
             $error = 'วันเริ่มแข่งขันต้องไม่อยู่ก่อนวันปิดรับสมัคร';
+        } elseif ($endDate && strtotime($startDate) > strtotime($endDate)) {
+            $error = 'วันจบการแข่งขันต้องไม่อยู่ก่อนวันเริ่มแข่งขัน';
         } else {
             try {
                 $stmt = $pdo->prepare("
-                    INSERT INTO tournaments (name, game_id, format, best_of, max_teams, prize_pool, venue_address, image_path, rules, description, registration_start, registration_end, start_date, status, created_by)
-                    VALUES (:name, :game_id, :format, :best_of, :max_teams, :prize_pool, :venue_address, :image_path, :rules, :description, :reg_start, :reg_end, :start_date, 'registration_open', :created_by)
+                    INSERT INTO tournaments (name, game_id, format, best_of, max_teams, prize_pool, venue_address, image_path, rules, description, registration_start, registration_end, start_date, end_date, status, created_by)
+                    VALUES (:name, :game_id, :format, :best_of, :max_teams, :prize_pool, :venue_address, :image_path, :rules, :description, :reg_start, :reg_end, :start_date, :end_date, 'registration_open', :created_by)
                 ");
                 $stmt->execute([
                     'name' => $name, 'game_id' => $gameId, 'format' => $format, 'best_of' => $bestOf, 'max_teams' => $maxTeams, 'prize_pool' => $prizePool,
                     'venue_address' => $venueAddress, 'image_path' => $imagePath, 'rules' => $rules, 'description' => $description, 'reg_start' => $regStart,
-                    'reg_end' => $regEnd, 'start_date' => $startDate, 'created_by' => $adminId
+                    'reg_end' => $regEnd, 'start_date' => $startDate, 'end_date' => $endDate, 'created_by' => $adminId
                 ]);
                 $success = 'สร้างทัวร์นาเมนต์ใหม่เรียบร้อยแล้ว';
             } catch (Exception $e) {
@@ -343,6 +337,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && ($_POST['action'] ?? '') == 'update'
         $regStart = !empty($_POST['registration_start']) ? $_POST['registration_start'] : null;
         $regEnd = !empty($_POST['registration_end']) ? $_POST['registration_end'] : null;
         $startDate = !empty($_POST['start_date']) ? $_POST['start_date'] : null;
+        $endDate = !empty($_POST['end_date']) ? $_POST['end_date'] : null;
 
         $newImagePath = uploadTournamentImage($_FILES['tournament_image'] ?? null);
 
@@ -354,33 +349,35 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && ($_POST['action'] ?? '') == 'update'
             $error = 'วันปิดรับสมัครต้องอยู่หลังวันเปิดรับสมัคร';
         } elseif (strtotime($regEnd) > strtotime($startDate)) {
             $error = 'วันเริ่มแข่งขันต้องไม่อยู่ก่อนวันปิดรับสมัคร';
+        } elseif ($endDate && strtotime($startDate) > strtotime($endDate)) {
+            $error = 'วันจบการแข่งขันต้องไม่อยู่ก่อนวันเริ่มแข่งขัน';
         } else {
             if ($newImagePath) {
                 $update = $pdo->prepare("
                     UPDATE tournaments 
                     SET name = :name, game_id = :game_id, format = :format, best_of = :best_of, max_teams = :max_teams, prize_pool = :prize_pool,
                         venue_address = :venue_address, image_path = :image_path, rules = :rules, description = :description,
-                        registration_start = :reg_start, registration_end = :reg_end, start_date = :start_date
+                        registration_start = :reg_start, registration_end = :reg_end, start_date = :start_date, end_date = :end_date
                     WHERE tournament_id = :id
                 ");
                 $update->execute([
                     'name' => $name, 'game_id' => $gameId, 'format' => $format, 'best_of' => $bestOf, 'max_teams' => $maxTeams, 'prize_pool' => $prizePool,
                     'venue_address' => $venueAddress, 'image_path' => $newImagePath, 'rules' => $rules,
                     'description' => $description, 'reg_start' => $regStart, 'reg_end' => $regEnd,
-                    'start_date' => $startDate, 'id' => $tid
+                    'start_date' => $startDate, 'end_date' => $endDate, 'id' => $tid
                 ]);
             } else {
                 $update = $pdo->prepare("
                     UPDATE tournaments 
                     SET name = :name, game_id = :game_id, format = :format, best_of = :best_of, max_teams = :max_teams, prize_pool = :prize_pool,
                         venue_address = :venue_address, rules = :rules, description = :description,
-                        registration_start = :reg_start, registration_end = :reg_end, start_date = :start_date
+                        registration_start = :reg_start, registration_end = :reg_end, start_date = :start_date, end_date = :end_date
                     WHERE tournament_id = :id
                 ");
                 $update->execute([
                     'name' => $name, 'game_id' => $gameId, 'format' => $format, 'best_of' => $bestOf, 'max_teams' => $maxTeams, 'prize_pool' => $prizePool,
                     'venue_address' => $venueAddress, 'rules' => $rules, 'description' => $description,
-                    'reg_start' => $regStart, 'reg_end' => $regEnd, 'start_date' => $startDate, 'id' => $tid
+                    'reg_start' => $regStart, 'reg_end' => $regEnd, 'start_date' => $startDate, 'end_date' => $endDate, 'id' => $tid
                 ]);
             }
             $success = 'อัปเดตข้อมูลทัวร์นาเมนต์เรียบร้อยแล้ว';
@@ -415,8 +412,6 @@ if (isset($_GET['delete_tournament'])) {
 // ==========================================
 if (isset($_GET['close_registration'])) {
     $tid = (int) $_GET['close_registration'];
-
-    $pdo->prepare("UPDATE tournament_registrations SET status = 'approved' WHERE tournament_id = :id")->execute(['id' => $tid]);
 
     $tStmt = $pdo->prepare("SELECT format FROM tournaments WHERE tournament_id = :id");
     $tStmt->execute(['id' => $tid]);
@@ -631,11 +626,12 @@ $csrfToken = generateCsrfToken();
                 safeSetValue('edit_registration_start', tournament.registration_start ? tournament.registration_start.replace(' ', 'T') : '');
                 safeSetValue('edit_registration_end', tournament.registration_end ? tournament.registration_end.replace(' ', 'T') : '');
                 safeSetValue('edit_start_date', tournament.start_date ? tournament.start_date.replace(' ', 'T') : '');
+                safeSetValue('edit_end_date', tournament.end_date ? tournament.end_date.replace(' ', 'T') : '');
                 
                 const previewContainer = document.getElementById('edit_image_preview');
                 if (previewContainer) {
                     if (tournament.image_path) {
-                        previewContainer.innerHTML = `<img src="../assets/${tournament.image_path}" class="h-20 w-auto rounded-lg border border-slate-200 object-cover mt-1">`;
+                        previewContainer.innerHTML = `<img src="../assets/${tournament.image_path}" class="h-20 w-auto rounded-lg border border-slate-200 object-cover mt-1" onerror="this.parentElement.innerHTML='<span class=\\\'text-xs text-slate-400 italic\\\'>ยังไม่มีรูปภาพ หรือไฟล์รูปภาพไม่พบ</span>';">`;
                     } else {
                         previewContainer.innerHTML = `<span class="text-xs text-slate-400 italic">ยังไม่มีรูปภาพ</span>`;
                     }
@@ -852,8 +848,8 @@ $csrfToken = generateCsrfToken();
                             ?>
                             <tr class="hover:bg-slate-50/80 transition-colors">
                                 <td class="p-4">
-                                    <?php if (!empty($t['image_path'])): ?>
-                                        <img src="../assets/<?php echo htmlspecialchars($t['image_path']); ?>" alt="Banner" class="w-14 h-10 object-cover rounded-lg border border-slate-200 shadow-sm">
+                                    <?php if (!empty($t['image_path']) && file_exists('../assets/' . $t['image_path'])): ?>
+                                        <img src="../assets/<?php echo htmlspecialchars($t['image_path']); ?>" alt="Banner" class="w-14 h-10 object-cover rounded-lg border border-slate-200 shadow-sm" onerror="this.onerror=null; this.parentElement.innerHTML='<div class=\'w-14 h-10 rounded-lg bg-slate-100 border border-slate-200 flex items-center justify-center text-slate-400 text-xs\'><i class=\'fa-solid fa-image\'></i></div>';">
                                     <?php else: ?>
                                         <div class="w-14 h-10 rounded-lg bg-slate-100 border border-slate-200 flex items-center justify-center text-slate-400 text-xs">
                                             <i class="fa-solid fa-image"></i>
@@ -861,12 +857,30 @@ $csrfToken = generateCsrfToken();
                                     <?php endif; ?>
                                 </td>
                                 <td class="p-4 font-bold text-slate-900">
-                                    <?php echo htmlspecialchars($t['name']); ?>
-                                    <?php if (!empty($t['prize_pool'])): ?>
-                                        <span class="ml-2 text-[10px] text-amber-600 font-bold bg-amber-50 px-2 py-0.5 rounded border border-amber-200">
-                                            🏆 <?php echo htmlspecialchars($t['prize_pool']); ?>
-                                        </span>
-                                    <?php endif; ?>
+                                    <div class="flex items-center gap-2">
+                                        <span><?php echo htmlspecialchars($t['name']); ?></span>
+                                        <?php if (!empty($t['prize_pool'])): ?>
+                                            <span class="text-[10px] text-amber-600 font-bold bg-amber-50 px-2 py-0.5 rounded border border-amber-200">
+                                                🏆 <?php echo htmlspecialchars($t['prize_pool']); ?>
+                                            </span>
+                                        <?php endif; ?>
+                                    </div>
+                                    <div class="text-xs text-slate-400 font-normal mt-1 flex items-center gap-3">
+                                        <?php if (!empty($t['start_date'])): ?>
+                                            <span title="ระยะเวลาการแข่งขัน">
+                                                <i class="fa-regular fa-calendar-days text-slate-400"></i> 
+                                                <?php echo date('d/m/Y', strtotime($t['start_date'])); ?>
+                                                <?php if (!empty($t['end_date'])): ?>
+                                                    - <?php echo date('d/m/Y', strtotime($t['end_date'])); ?>
+                                                <?php endif; ?>
+                                            </span>
+                                        <?php endif; ?>
+                                        <?php if (!empty($t['venue_address'])): ?>
+                                            <span title="สถานที่จัดงาน">
+                                                <i class="fa-solid fa-location-dot text-slate-400"></i> <?php echo htmlspecialchars($t['venue_address']); ?>
+                                            </span>
+                                        <?php endif; ?>
+                                    </div>
                                 </td>
                                 <td class="p-4 text-xs">
                                     <span class="px-2.5 py-1 rounded-lg bg-slate-100 border border-slate-200 font-semibold text-slate-700">
@@ -977,17 +991,29 @@ $csrfToken = generateCsrfToken();
                         <label class="block text-xs font-bold uppercase text-slate-700 tracking-wider mb-2">ประเภทและเกมที่ใช้แข่ง</label>
                         <select name="game_id" id="create_game_id" onchange="autoFillRules(this, 'create_rules')" required class="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm font-medium">
                             <option value="">-- เลือกประเภท / เกมการแข่งขัน --</option>
-                            <optgroup label="🏆 ประเภททีม (Team Categories)">
-                                <option value="<?php echo getGameId($games, 'Arena of Valor (RoV) - รุ่นอายุต่ำกว่า 18 ปี'); ?>" data-game-name="Arena of Valor (RoV) - รุ่นอายุต่ำกว่า 18 ปี">Arena of Valor (RoV) - รุ่นอายุต่ำกว่า 18 ปี</option>
-                                <option value="<?php echo getGameId($games, 'Arena of Valor (RoV) - รุ่น Open'); ?>" data-game-name="Arena of Valor (RoV) - รุ่น Open">Arena of Valor (RoV) - รุ่น Open</option>
-                                <option value="<?php echo getGameId($games, 'Free Fire - รุ่น Open'); ?>" data-game-name="Free Fire - รุ่น Open">Free Fire - รุ่น Open</option>
-                            </optgroup>
-                            <optgroup label="👤 ประเภทบุคคล / เกมเดี่ยว (Individual Categories)">
-                                <option value="<?php echo getGameId($games, 'Tekken 8 - รุ่น Open'); ?>" data-game-name="Tekken 8 - รุ่น Open">Tekken 8 - รุ่น Open</option>
-                                <option value="<?php echo getGameId($games, 'Street Fighter 6 - รุ่น Open'); ?>" data-game-name="Street Fighter 6 - รุ่น Open">Street Fighter 6 - รุ่น Open</option>
-                                <option value="<?php echo getGameId($games, 'Efootball Mobile - รุ่น Open'); ?>" data-game-name="Efootball Mobile - รุ่น Open">Efootball Mobile - รุ่น Open</option>
-                                <option value="<?php echo getGameId($games, 'Roblox - รุ่นอายุ 8-12 ปี'); ?>" data-game-name="Roblox - รุ่นอายุ 8-12 ปี">Roblox - รุ่นอายุ 8-12 ปี</option>
-                            </optgroup>
+                            <?php 
+                                $teamGames = array_filter($games, fn($g) => ($g['play_mode'] ?? 'team') === 'team');
+                                $soloGames = array_filter($games, fn($g) => ($g['play_mode'] ?? 'team') === 'solo');
+                            ?>
+                            <?php if (!empty($teamGames)): ?>
+                                <optgroup label="🏆 ประเภททีม (Team Categories)">
+                                    <?php foreach ($teamGames as $g): ?>
+                                        <option value="<?= $g['game_id']; ?>" data-game-name="<?= htmlspecialchars($g['name']); ?>">
+                                            <?= htmlspecialchars($g['name']); ?>
+                                        </option>
+                                    <?php endforeach; ?>
+                                </optgroup>
+                            <?php endif; ?>
+
+                            <?php if (!empty($soloGames)): ?>
+                                <optgroup label="👤 ประเภทบุคคล / เกมเดี่ยว (Individual Categories)">
+                                    <?php foreach ($soloGames as $g): ?>
+                                        <option value="<?= $g['game_id']; ?>" data-game-name="<?= htmlspecialchars($g['name']); ?>">
+                                            <?= htmlspecialchars($g['name']); ?>
+                                        </option>
+                                    <?php endforeach; ?>
+                                </optgroup>
+                            <?php endif; ?>
                         </select>
                     </div>
 
@@ -1019,18 +1045,22 @@ $csrfToken = generateCsrfToken();
                     </div>
                 </div>
 
-                <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                     <div>
                         <label class="block text-xs font-bold uppercase text-slate-700 tracking-wider mb-2">วันเปิดรับสมัคร</label>
-                        <input type="datetime-local" name="registration_start" required class="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm font-medium">
+                        <input type="datetime-local" name="registration_start" required class="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-xs font-medium">
                     </div>
                     <div>
                         <label class="block text-xs font-bold uppercase text-slate-700 tracking-wider mb-2">วันปิดรับสมัคร</label>
-                        <input type="datetime-local" name="registration_end" required class="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm font-medium">
+                        <input type="datetime-local" name="registration_end" required class="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-xs font-medium">
                     </div>
                     <div>
                         <label class="block text-xs font-bold uppercase text-slate-700 tracking-wider mb-2">วันเริ่มแข่งขัน</label>
-                        <input type="datetime-local" name="start_date" required class="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm font-medium">
+                        <input type="datetime-local" name="start_date" required class="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-xs font-medium">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-bold uppercase text-slate-700 tracking-wider mb-2">วันจบการแข่งขัน</label>
+                        <input type="datetime-local" name="end_date" class="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-xs font-medium">
                     </div>
                 </div>
 
@@ -1077,17 +1107,26 @@ $csrfToken = generateCsrfToken();
                     <div>
                         <label class="block text-xs font-bold uppercase text-slate-700 tracking-wider mb-2">ประเภทและเกมที่ใช้แข่ง</label>
                         <select name="game_id" id="edit_game_id" onchange="autoFillRules(this, 'edit_rules')" required class="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm font-medium">
-                            <optgroup label="🏆 ประเภททีม (Team Categories)">
-                                <option value="<?php echo getGameId($games, 'Arena of Valor (RoV) - รุ่นอายุต่ำกว่า 18 ปี'); ?>" data-game-name="Arena of Valor (RoV) - รุ่นอายุต่ำกว่า 18 ปี">Arena of Valor (RoV) - รุ่นอายุต่ำกว่า 18 ปี</option>
-                                <option value="<?php echo getGameId($games, 'Arena of Valor (RoV) - รุ่น Open'); ?>" data-game-name="Arena of Valor (RoV) - รุ่น Open">Arena of Valor (RoV) - รุ่น Open</option>
-                                <option value="<?php echo getGameId($games, 'Free Fire - รุ่น Open'); ?>" data-game-name="Free Fire - รุ่น Open">Free Fire - รุ่น Open</option>
-                            </optgroup>
-                            <optgroup label="👤 ประเภทบุคคล / เกมเดี่ยว (Individual Categories)">
-                                <option value="<?php echo getGameId($games, 'Tekken 8 - รุ่น Open'); ?>" data-game-name="Tekken 8 - รุ่น Open">Tekken 8 - รุ่น Open</option>
-                                <option value="<?php echo getGameId($games, 'Street Fighter 6 - รุ่น Open'); ?>" data-game-name="Street Fighter 6 - รุ่น Open">Street Fighter 6 - รุ่น Open</option>
-                                <option value="<?php echo getGameId($games, 'Efootball Mobile - รุ่น Open'); ?>" data-game-name="Efootball Mobile - รุ่น Open">Efootball Mobile - รุ่น Open</option>
-                                <option value="<?php echo getGameId($games, 'Roblox - รุ่นอายุ 8-12 ปี'); ?>" data-game-name="Roblox - รุ่นอายุ 8-12 ปี">Roblox - รุ่นอายุ 8-12 ปี</option>
-                            </optgroup>
+                            <option value="">-- เลือกประเภท / เกมการแข่งขัน --</option>
+                            <?php if (!empty($teamGames)): ?>
+                                <optgroup label="🏆 ประเภททีม (Team Categories)">
+                                    <?php foreach ($teamGames as $g): ?>
+                                        <option value="<?= $g['game_id']; ?>" data-game-name="<?= htmlspecialchars($g['name']); ?>">
+                                            <?= htmlspecialchars($g['name']); ?>
+                                        </option>
+                                    <?php endforeach; ?>
+                                </optgroup>
+                            <?php endif; ?>
+
+                            <?php if (!empty($soloGames)): ?>
+                                <optgroup label="👤 ประเภทบุคคล / เกมเดี่ยว (Individual Categories)">
+                                    <?php foreach ($soloGames as $g): ?>
+                                        <option value="<?= $g['game_id']; ?>" data-game-name="<?= htmlspecialchars($g['name']); ?>">
+                                            <?= htmlspecialchars($g['name']); ?>
+                                        </option>
+                                    <?php endforeach; ?>
+                                </optgroup>
+                            <?php endif; ?>
                         </select>
                     </div>
 
@@ -1119,18 +1158,22 @@ $csrfToken = generateCsrfToken();
                     </div>
                 </div>
 
-                <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                     <div>
                         <label class="block text-xs font-bold uppercase text-slate-700 tracking-wider mb-2">วันเปิดรับสมัคร</label>
-                        <input type="datetime-local" name="registration_start" id="edit_registration_start" required class="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm font-medium">
+                        <input type="datetime-local" name="registration_start" id="edit_registration_start" required class="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-xs font-medium">
                     </div>
                     <div>
                         <label class="block text-xs font-bold uppercase text-slate-700 tracking-wider mb-2">วันปิดรับสมัคร</label>
-                        <input type="datetime-local" name="registration_end" id="edit_registration_end" required class="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm font-medium">
+                        <input type="datetime-local" name="registration_end" id="edit_registration_end" required class="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-xs font-medium">
                     </div>
                     <div>
                         <label class="block text-xs font-bold uppercase text-slate-700 tracking-wider mb-2">วันเริ่มแข่งขัน</label>
-                        <input type="datetime-local" name="start_date" id="edit_start_date" required class="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm font-medium">
+                        <input type="datetime-local" name="start_date" id="edit_start_date" required class="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-xs font-medium">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-bold uppercase text-slate-700 tracking-wider mb-2">วันจบการแข่งขัน</label>
+                        <input type="datetime-local" name="end_date" id="edit_end_date" class="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-xs font-medium">
                     </div>
                 </div>
 

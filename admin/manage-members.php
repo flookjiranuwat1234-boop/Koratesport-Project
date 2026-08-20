@@ -66,9 +66,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 $sql = "
     SELECT u.user_id, u.username, u.email, u.role, u.status, u.created_at,
         p.player_id AS player_id, p.display_name,
-        (CASE WHEN p.player_id IS NOT NULL AND EXISTS (
-            SELECT 1 FROM player_checkin_history ch
-            WHERE ch.player_id = p.player_id
+        (CASE WHEN p.player_id IS NOT NULL OR u.role = 'athlete' THEN 1 ELSE 0 END) AS is_athlete,
+        (CASE WHEN p.player_id IS NOT NULL AND (
+            EXISTS (SELECT 1 FROM tournament_rosters tr WHERE tr.player_id = p.player_id)
+            OR EXISTS (SELECT 1 FROM tournament_player_checkins tpc WHERE tpc.player_id = p.player_id)
+            OR EXISTS (SELECT 1 FROM tournament_registrations reg WHERE reg.player_id = p.player_id)
+            OR EXISTS (SELECT 1 FROM team_members tm WHERE tm.player_id = p.player_id)
         ) THEN 1 ELSE 0 END) AS has_played
     FROM users u
     LEFT JOIN players p ON p.user_id = u.user_id
@@ -82,18 +85,11 @@ if ($q !== '') {
 if ($roleFilter === 'admin') {
     $sql .= " AND u.role = 'admin'";
 } elseif ($roleFilter === 'athlete') {
-    // "นักกีฬา" คือผู้ที่มีประวัติเช็คอินถาวรแล้ว
-    $sql .= " AND u.role != 'admin' AND p.player_id IS NOT NULL AND EXISTS (
-        SELECT 1 FROM player_checkin_history ch
-        WHERE ch.player_id = p.player_id
-    )";
+    // "นักกีฬา" คือผู้ที่มีโปรไฟล์นักกีฬา หรือมีประวัติเข้าร่วมแข่งขัน
+    $sql .= " AND u.role != 'admin' AND (p.player_id IS NOT NULL OR u.role = 'athlete')";
 } elseif ($roleFilter === 'guest') {
-    // "ทั่วไป" = สมัครแล้วแต่ยังไม่เคยเช็คอินแข่งจริง
-    $sql .= " AND u.role != 'admin' AND NOT EXISTS (
-        SELECT 1 FROM players p2
-        JOIN player_checkin_history ch ON ch.player_id = p2.player_id
-        WHERE p2.user_id = u.user_id
-    )";
+    // "ทั่วไป" = ผู้ใช้ทั่วไปที่ยังไม่มีโปรไฟล์นักกีฬา
+    $sql .= " AND u.role != 'admin' AND p.player_id IS NULL AND u.role != 'athlete'";
 }
 if ($profileFilter === 'none') {
     // สมัครสมาชิกแล้ว แต่ยังไม่เคยสร้าง/claim โปรไฟล์นักกีฬาเลย
@@ -101,16 +97,19 @@ if ($profileFilter === 'none') {
 } elseif ($profileFilter === 'has') {
     $sql .= " AND p.player_id IS NOT NULL";
 } elseif ($profileFilter === 'confirmed') {
-    // นักกีฬาตัวจริง: มีโปรไฟล์ + เคยเช็คอินเข้าแข่งจริงในตารางประวัติถาวร
-    $sql .= " AND p.player_id IS NOT NULL AND EXISTS (
-        SELECT 1 FROM player_checkin_history ch
-        WHERE ch.player_id = p.player_id
+    // นักกีฬาที่เคยมีชื่อในรายการแข่งขันจริง
+    $sql .= " AND p.player_id IS NOT NULL AND (
+        EXISTS (SELECT 1 FROM tournament_rosters tr WHERE tr.player_id = p.player_id)
+        OR EXISTS (SELECT 1 FROM tournament_player_checkins tpc WHERE tpc.player_id = p.player_id)
+        OR EXISTS (SELECT 1 FROM tournament_registrations reg WHERE reg.player_id = p.player_id)
+        OR EXISTS (SELECT 1 FROM team_members tm WHERE tm.player_id = p.player_id)
     )";
 } elseif ($profileFilter === 'profile_only') {
-    // มีโปรไฟล์แล้ว แต่ยังไม่เคยเช็คอินเข้าแข่งเลยสักครั้ง
+    // มีโปรไฟล์แล้ว แต่ยังไม่เคยลงแข่งหรือสังกัดทีมใด
     $sql .= " AND p.player_id IS NOT NULL AND NOT EXISTS (
-        SELECT 1 FROM player_checkin_history ch
-        WHERE ch.player_id = p.player_id
+        SELECT 1 FROM tournament_rosters tr WHERE tr.player_id = p.player_id
+    ) AND NOT EXISTS (
+        SELECT 1 FROM team_members tm WHERE tm.player_id = p.player_id
     )";
 }
 $sql .= " ORDER BY u.created_at DESC LIMIT 200";
@@ -397,7 +396,7 @@ $members = $stmt->fetchAll();
                                 <td class="p-4 text-center">
                                     <?php if ($m['role'] == 'admin'): ?>
                                         <span class="px-2.5 py-1 rounded-full bg-purple-50 text-purple-700 border border-purple-200 text-[11px] font-bold">ผู้ดูแลระบบ</span>
-                                    <?php elseif ($m['has_played']): ?>
+                                    <?php elseif (!empty($m['is_athlete']) || !empty($m['player_id']) || !empty($m['has_played'])): ?>
                                         <span class="px-2.5 py-1 rounded-full bg-orange-50 text-brand-orange border border-orange-200 text-[11px] font-bold">นักกีฬา</span>
                                     <?php else: ?>
                                         <span class="px-2.5 py-1 rounded-full bg-slate-100 text-slate-600 border border-slate-200 text-[11px] font-bold">ทั่วไป</span>
@@ -411,10 +410,10 @@ $members = $stmt->fetchAll();
                                             <i class="fa-solid fa-gamepad"></i>
                                             <span><?php echo htmlspecialchars($m['display_name']); ?></span>
                                         </a>
-                                        <?php if ($m['has_played']): ?>
-                                            <span class="block mt-1 px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200 text-[9px] font-bold uppercase w-max">นักกีฬาตัวจริง</span>
+                                        <?php if (!empty($m['has_played'])): ?>
+                                            <span class="block mt-1 px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200 text-[9px] font-bold uppercase w-max">เคยลงแข่งแล้ว</span>
                                         <?php else: ?>
-                                            <span class="block mt-1 px-1.5 py-0.5 rounded bg-blue-50 text-blue-600 border border-blue-200 text-[9px] font-bold uppercase w-max">ยังไม่เคยแข่ง</span>
+                                            <span class="block mt-1 px-1.5 py-0.5 rounded bg-blue-50 text-blue-600 border border-blue-200 text-[9px] font-bold uppercase w-max">นักกีฬาใหม่</span>
                                         <?php endif; ?>
                                     <?php else: ?>
                                         <span class="text-slate-300 italic">-</span>

@@ -3,9 +3,10 @@
 require_once '../config/db.php';
 require_once '../includes/auth.php';
 
-$error = '';
+$error = trim($_GET['error'] ?? '');
 $justRegistered = isset($_GET['registered']);
 $resetSuccess = isset($_GET['reset_success']);
+$savedLogin = $_COOKIE['remembered_login'] ?? '';
 
 // ดึงข้อมูลสถิติสำหรับ Infographic ฝั่งซ้าย
 $totalTeamsLogin = $pdo->query("
@@ -21,11 +22,21 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     if (!verifyCsrfToken($_POST['csrf_token'] ?? '')) {
         $error = 'คำขอไม่ถูกต้อง กรุณาลองใหม่อีกครั้ง';
     } else {
-        $username = trim($_POST['username']);
-        $password = $_POST['password'];
+        $username = trim($_POST['username'] ?? '');
+        $password = $_POST['password'] ?? '';
+        $rememberMe = isset($_POST['remember_me']);
 
         try {
             $user = loginUser($pdo, $username, $password);
+
+            // จัดการคุกกี้จดจำชื่อผู้ใช้/อีเมล
+            if ($rememberMe) {
+                setcookie('remembered_login', $username, time() + (86400 * 30), "/");
+            } else {
+                if (isset($_COOKIE['remembered_login'])) {
+                    setcookie('remembered_login', '', time() - 3600, "/");
+                }
+            }
 
             // ส่งแต่ละ role ไปหน้าที่เหมาะกับตัวเอง
             if ($user['role'] == 'admin') {
@@ -98,34 +109,25 @@ $csrfToken = generateCsrfToken();
                 url('https://images.unsplash.com/photo-1542751371-adc38448a05e?q=80&w=2070&auto=format&fit=crop');
             background-size: cover;
             background-position: center;
-            animation: kenBurnsLogin 25s ease-in-out infinite;
+            animation: kenBurnsLogin 20s infinite alternate ease-in-out;
         }
 
         .glass-panel-left {
-            background: rgba(255, 255, 255, 0.12);
-            backdrop-filter: blur(16px);
-            -webkit-backdrop-filter: blur(16px);
-            border: 1px solid rgba(255, 255, 255, 0.25);
-            transition: all 0.3s ease;
-        }
-
-        .glass-panel-left:hover {
-            background: rgba(255, 255, 255, 0.18);
-            transform: translateY(-3px);
-            border-color: rgba(255, 85, 0, 0.6);
+            background: rgba(10, 10, 12, 0.65);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
         }
 
         .glass-panel-light {
-            background: rgba(255, 255, 255, 0.94);
-            backdrop-filter: blur(24px);
-            -webkit-backdrop-filter: blur(24px);
-            border: 1px solid rgba(255, 255, 255, 0.9);
+            background: #FFFFFF;
+            border: 1px solid #E2E8F0;
             box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
         }
 
         .glass-input-light {
-            background: #FFFFFF;
-            border: 1px solid #CBD5E1;
+            background: #F8FAFC;
+            border: 1.5px solid #E2E8F0;
             transition: all 0.25s ease;
         }
 
@@ -178,23 +180,26 @@ $csrfToken = generateCsrfToken();
                     Nakhon Ratchasima Gaming Hub
                 </div>
                 <h2 class="text-5xl font-black text-white leading-tight uppercase font-display">ศูนย์กลางการแข่งขัน <br><span class="text-transparent bg-clip-text bg-gradient-to-r from-brand-orange to-white">อีสปอร์ตระดับมืออาชีพ</span></h2>
+                <p class="text-gray-300 text-sm leading-relaxed">
+                    ยกระดับมาตรฐานการแข่งขันอีสปอร์ตจังหวัดนครราชสีมาอย่างเป็นทางการ ติดตามสายการแข่งขัน ผลคะแนนสด และทำเนียบนักกีฬาระดับแนวหน้า
+                </p>
                 
-                <!-- Infographic Cards -->
-                <div class="grid grid-cols-3 gap-4 pt-4">
+                <!-- Statistics Grid Infographics -->
+                <div class="grid grid-cols-3 gap-4 pt-4 border-t border-white/10">
                     <div class="glass-panel-left p-4 rounded-2xl border-l-4 border-l-brand-orange shadow-lg">
-                        <div class="text-xs text-gray-200 font-bold uppercase tracking-wider">TEAMS</div>
-                        <div class="text-2xl font-black font-display text-white mt-1 flex items-center gap-0.5">
-                            <span data-countup="<?php echo $totalTeamsLogin; ?>">0</span><span class="suffix-span opacity-0 transition-opacity duration-300"></span>
+                        <div class="text-xs text-gray-200 font-bold uppercase tracking-wider">TEAMS REGISTERED</div>
+                        <div class="text-2xl font-black font-display text-brand-orange mt-1 flex items-center gap-1">
+                            <span data-countup="<?php echo $totalTeamsLogin; ?>">0</span><span class="suffix-span opacity-0 transition-opacity duration-300 text-xs font-normal">CLUBS</span>
                         </div>
-                        <div class="text-[11px] text-emerald-400 font-semibold mt-1">Registered</div>
+                        <div class="text-[11px] text-gray-300 font-semibold mt-1">สโมสรอีสปอร์ต</div>
                     </div>
 
-                    <div class="glass-panel-left p-4 rounded-2xl border-l-4 border-l-amber-400 shadow-lg">
+                    <div class="glass-panel-left p-4 rounded-2xl border-l-4 border-l-cyan-400 shadow-lg">
                         <div class="text-xs text-gray-200 font-bold uppercase tracking-wider">TOURNAMENTS</div>
-                        <div class="text-2xl font-black font-display text-white mt-1">
-                            <span data-countup="<?php echo $totalTournamentsLogin; ?>">0</span>
+                        <div class="text-2xl font-black font-display text-cyan-300 mt-1 flex items-center gap-1">
+                            <span data-countup="<?php echo $totalTournamentsLogin; ?>">0</span><span class="suffix-span opacity-0 transition-opacity duration-300 text-xs font-normal">CUPS</span>
                         </div>
-                        <div class="text-[11px] text-brand-orange font-semibold mt-1">Live & Upcoming</div>
+                        <div class="text-[11px] text-cyan-400/80 font-semibold mt-1">ทัวร์นาเมนต์ทางการ</div>
                     </div>
 
                     <div class="glass-panel-left p-4 rounded-2xl border-l-4 border-l-purple-500 shadow-lg">
@@ -215,7 +220,7 @@ $csrfToken = generateCsrfToken();
 
                 <div class="mb-8">
                     <h2 class="text-3xl font-extrabold text-slate-900 tracking-tight flex items-center gap-2">เข้าสู่ระบบ</h2>
-                    <p class="text-sm text-slate-500 mt-2 font-medium">กรอกข้อมูลเพื่อเข้าสู่บัญชีของคุณ</p>
+                    <p class="text-sm text-slate-500 mt-2 font-medium">กรอกชื่อผู้ใช้หรืออีเมลเพื่อเข้าสู่บัญชีของคุณ</p>
                 </div>
 
                 <?php if ($resetSuccess): ?>
@@ -227,7 +232,7 @@ $csrfToken = generateCsrfToken();
 
                 <?php if ($error): ?>
                     <div class="mb-6 p-4 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-sm font-semibold flex items-center gap-3">
-                        <i class="fa-solid fa-triangle-exclamation text-lg text-rose-500"></i>
+                        <i class="fa-solid fa-triangle-exclamation text-lg text-rose-500 shrink-0"></i>
                         <span><?php echo htmlspecialchars($error); ?></span>
                     </div>
                 <?php endif; ?>
@@ -236,25 +241,37 @@ $csrfToken = generateCsrfToken();
                     <input type="hidden" name="csrf_token" value="<?php echo $csrfToken; ?>">
                     
                     <div>
-                        <label class="block text-xs font-bold text-slate-700 uppercase mb-2">Username</label>
+                        <label for="username_input" class="block text-xs font-bold text-slate-700 uppercase mb-2">ชื่อผู้ใช้ หรือ อีเมล</label>
                         <div class="glass-input-light rounded-xl overflow-hidden flex items-center">
                             <span class="pl-4 text-slate-400"><i class="fa-solid fa-user"></i></span>
-                            <input type="text" name="username" required class="w-full bg-transparent px-4 py-3.5 text-sm focus:outline-none" placeholder="Username">
+                            <input type="text" name="username" id="username_input" autocomplete="username" required 
+                                value="<?php echo htmlspecialchars($savedLogin); ?>"
+                                class="w-full bg-transparent px-4 py-3.5 text-sm text-slate-900 focus:outline-none font-medium" placeholder="Username หรือ Email">
                         </div>
                     </div>
 
                     <div>
-                        <div class="flex items-center justify-between mb-2">
-                            <label class="block text-xs font-bold text-slate-700 uppercase">Password</label>
-                            <a href="forgot-password.php" class="text-xs font-semibold text-brand-orange hover:underline">ลืมรหัสผ่าน?</a>
-                        </div>
+                        <label for="password_input" class="block text-xs font-bold text-slate-700 uppercase mb-2">รหัสผ่าน</label>
                         <div class="glass-input-light rounded-xl overflow-hidden flex items-center">
                             <span class="pl-4 text-slate-400"><i class="fa-solid fa-lock"></i></span>
-                            <input type="password" name="password" id="password_input" required class="w-full bg-transparent px-4 py-3.5 text-sm focus:outline-none" placeholder="••••••••">
+                            <input type="password" name="password" id="password_input" autocomplete="current-password" required 
+                                class="w-full bg-transparent px-4 py-3.5 text-sm text-slate-900 focus:outline-none font-medium" placeholder="••••••••">
+                            <button type="button" onclick="togglePasswordVisibility()" class="px-4 text-slate-400 hover:text-slate-600 focus:outline-none cursor-pointer" title="แสดง/ซ่อนรหัสผ่าน">
+                                <i id="password_eye_icon" class="fa-regular fa-eye"></i>
+                            </button>
                         </div>
                     </div>
 
-                    <button type="submit" class="shine-btn w-full py-4 rounded-xl font-bold text-white uppercase bg-brand-orange hover:bg-brand-glow transition-all">
+                    <div class="flex items-center justify-between text-xs pt-1">
+                        <label class="flex items-center gap-2 text-slate-600 cursor-pointer select-none">
+                            <input type="checkbox" name="remember_me" value="1" <?php echo !empty($savedLogin) ? 'checked' : ''; ?> 
+                                class="w-4 h-4 rounded border-slate-300 text-brand-orange focus:ring-brand-orange accent-[#FF5500]">
+                            <span class="font-medium">จดจำการเข้าสู่ระบบ</span>
+                        </label>
+                        <a href="forgot-password.php" class="font-bold text-brand-orange hover:underline">ลืมรหัสผ่าน?</a>
+                    </div>
+
+                    <button type="submit" class="shine-btn w-full py-4 rounded-xl font-bold text-white uppercase bg-brand-orange hover:bg-brand-glow transition-all shadow-md cursor-pointer">
                         เข้าสู่ระบบ
                     </button>
                 </form>
@@ -267,6 +284,21 @@ $csrfToken = generateCsrfToken();
     </div>
 
     <script>
+        // ฟังก์ชันสลับการมองเห็นรหัสผ่าน
+        function togglePasswordVisibility() {
+            const input = document.getElementById('password_input');
+            const icon = document.getElementById('password_eye_icon');
+            if (input.type === 'password') {
+                input.type = 'text';
+                icon.classList.remove('fa-eye');
+                icon.classList.add('fa-eye-slash');
+            } else {
+                input.type = 'password';
+                icon.classList.remove('fa-eye-slash');
+                icon.classList.add('fa-eye');
+            }
+        }
+
         // Count-Up Animation
         document.addEventListener('DOMContentLoaded', () => {
             const counters = document.querySelectorAll('[data-countup]');

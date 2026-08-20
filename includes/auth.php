@@ -46,20 +46,23 @@ function registerUser($pdo, $username, $email, $password, $securityQuestion, $se
 // login ผู้ใช้ ถ้าถูกต้องจะเก็บข้อมูลไว้ใน session
 function loginUser($pdo, $username, $password)
 {
-    $stmt = $pdo->prepare("SELECT * FROM users WHERE username = :username");
-    $stmt->execute(['username' => $username]);
+    // รองรับทั้งการกรอก Username หรือ Email (ช่วยให้เข้าสู่ระบบผ่านรหัสผ่านที่ Browser จดจำไว้ได้)
+    $stmt = $pdo->prepare("SELECT * FROM users WHERE username = :login OR email = :login LIMIT 1");
+    $stmt->execute(['login' => $username]);
     $user = $stmt->fetch();
 
     if (!$user || !password_verify($password, $user['password_hash'])) {
-        throw new Exception("ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง");
+        throw new Exception("ชื่อผู้ใช้/อีเมล หรือรหัสผ่านไม่ถูกต้อง");
     }
 
-    if ($user['status'] == 'suspended') {
-        throw new Exception("บัญชีนี้ถูกระงับการใช้งาน");
+    if ($user['status'] == 'suspended' || $user['status'] == 'banned') {
+        throw new Exception("บัญชีนี้ถูกระงับการใช้งาน กรุณาติดต่อผู้ดูแลระบบ");
     }
 
     // สร้าง session id ใหม่ทุกครั้งที่ login สำเร็จ ป้องกันคนอื่นเดา/ปลูกฝัง session id เก่ามาใช้
-    session_regenerate_id(true);
+    if (!headers_sent()) {
+        session_regenerate_id(true);
+    }
 
     $_SESSION['user_id'] = $user['user_id'];
     $_SESSION['username'] = $user['username'];
@@ -93,17 +96,39 @@ function logoutUser()
     session_destroy();
 }
 
-// เช็คว่า login อยู่หรือยัง
+// เช็คว่า login อยู่หรือยัง และตรวจสอบสถานะการระงับบัญชีแบบ Real-time
 function isLoggedIn()
 {
-    return isset($_SESSION['user_id']);
+    if (empty($_SESSION['user_id'])) {
+        return false;
+    }
+
+    global $pdo;
+    if (isset($pdo)) {
+        $stmt = $pdo->prepare("SELECT status FROM users WHERE user_id = :id");
+        $stmt->execute(['id' => $_SESSION['user_id']]);
+        $status = $stmt->fetchColumn();
+
+        if ($status === 'suspended' || $status === 'banned') {
+            logoutUser();
+            return false;
+        }
+    }
+
+    return true;
 }
 
-// ถ้ายังไม่ login ให้เด้งไปหน้า login เลย ใช้ต้นไฟล์ที่ต้องการป้องกัน
+// ถ้ายังไม่ login หรือบัญชีถูกระงับ ให้เด้งไปหน้า login
 function requireLogin()
 {
+    $scriptDir = dirname($_SERVER['SCRIPT_NAME'] ?? '');
+    $basePath = rtrim(dirname($scriptDir), '/\\');
+    if ($basePath === '' || $basePath === '/' || $basePath === '\\') {
+        $basePath = rtrim($scriptDir, '/\\');
+    }
+
     if (!isLoggedIn()) {
-        header('Location: /auth/login.php');
+        header("Location: {$basePath}/auth/login.php");
         exit;
     }
 }

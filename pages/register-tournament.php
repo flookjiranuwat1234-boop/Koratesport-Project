@@ -107,6 +107,35 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                             'teamid' => $teamId,
                             'category' => $teamCategory
                         ]);
+
+                        // Snapshot สมาชิกของทีมทุกคนเข้าสู่ตาราง tournament_rosters ประจำรายการนี้
+                        $membersStmt = $pdo->prepare("
+                            SELECT tm.player_id, tm.in_game_role, tm.is_substitute,
+                                   (CASE WHEN t.captain_player_id = tm.player_id THEN 1 ELSE 0 END) AS is_captain
+                            FROM team_members tm
+                            JOIN teams t ON t.team_id = tm.team_id
+                            WHERE tm.team_id = :team_id AND tm.is_active = 1
+                        ");
+                        $membersStmt->execute(['team_id' => $teamId]);
+                        $rosterMembers = $membersStmt->fetchAll(PDO::FETCH_ASSOC);
+
+                        foreach ($rosterMembers as $rm) {
+                            $pdo->prepare("
+                                INSERT INTO tournament_rosters (tournament_id, team_id, player_id, in_game_role, is_captain, is_substitute)
+                                VALUES (:tid, :team_id, :pid, :role, :is_cap, :is_sub)
+                                ON DUPLICATE KEY UPDATE 
+                                    in_game_role = VALUES(in_game_role),
+                                    is_captain = VALUES(is_captain),
+                                    is_substitute = VALUES(is_substitute)
+                            ")->execute([
+                                'tid' => $tournamentId,
+                                'team_id' => $teamId,
+                                'pid' => $rm['player_id'],
+                                'role' => $rm['in_game_role'],
+                                'is_cap' => $rm['is_captain'],
+                                'is_sub' => $rm['is_substitute']
+                            ]);
+                        }
                         
                         $success = 'ส่งใบสมัครด้วยทีม "' . htmlspecialchars($teamData['name']) . '" เรียบร้อยแล้ว!';
                     }

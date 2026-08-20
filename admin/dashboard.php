@@ -15,39 +15,33 @@ $importedPlayerCount = $pdo->query("SELECT COUNT(*) FROM players")->fetchColumn(
 $claimedPlayerCount = $pdo->query("SELECT COUNT(*) FROM players WHERE user_id IS NOT NULL")->fetchColumn();
 $unclaimedPlayerCount = $pdo->query("SELECT COUNT(*) FROM players WHERE user_id IS NULL")->fetchColumn();
 
-// 3) เกณฑ์ "นักกีฬาตัวจริง": มีบัญชีผู้ใช้ + มีประวัติการเช็คอินถาวรในระบบ (ข้อมูลไม่หายแม้ลบทัวร์นาเมนต์)
-$confirmedAthleteCount = $pdo->query("
-    SELECT COUNT(DISTINCT p.player_id)
-    FROM players p
-    JOIN player_checkin_history ch ON ch.player_id = p.player_id
-    WHERE p.user_id IS NOT NULL
+// 3) เกณฑ์ "นักกีฬาตัวจริง": มีบัญชีผู้ใช้ + มีประวัติการแข่งขันหรือสังกัดทีมในระบบ (ตรงกับ manage-members.php?profile=confirmed)
+$confirmedAthleteCount = (int) $pdo->query("
+    SELECT COUNT(DISTINCT u.user_id)
+    FROM users u
+    JOIN players p ON p.user_id = u.user_id
+    WHERE u.role != 'admin' AND (
+        EXISTS (SELECT 1 FROM tournament_rosters tr WHERE tr.player_id = p.player_id)
+        OR EXISTS (SELECT 1 FROM tournament_player_checkins tpc WHERE tpc.player_id = p.player_id)
+        OR EXISTS (SELECT 1 FROM tournament_registrations reg WHERE reg.player_id = p.player_id)
+        OR EXISTS (SELECT 1 FROM team_members tm WHERE tm.player_id = p.player_id)
+    )
 ")->fetchColumn();
 
 // 4) บัญชีผู้ใช้ทั้งหมด (ไม่นับ admin)
-$memberCount = $pdo->query("SELECT COUNT(*) FROM users WHERE role != 'admin'")->fetchColumn();
+$memberCount = (int) $pdo->query("SELECT COUNT(*) FROM users WHERE role != 'admin'")->fetchColumn();
 
-// 5) มีบัญชี + มีโปรไฟล์นักกีฬาแล้ว แต่ยังไม่เคยเช็คอินเข้าแข่งขัน
-$profileOnlyNoTournamentCount = $pdo->query("
+// 5) บัญชีสมาชิกที่ยังไม่เคยลงแข่งหรือสังกัดทีมใด (ตรงกับ manage-members.php?profile=profile_only)
+$membersNoTournamentCount = (int) $pdo->query("
     SELECT COUNT(DISTINCT u.user_id)
     FROM users u
     JOIN players p ON p.user_id = u.user_id
     WHERE u.role != 'admin'
-      AND NOT EXISTS (
-          SELECT 1 FROM player_checkin_history ch
-          WHERE ch.player_id = p.player_id
-      )
+      AND NOT EXISTS (SELECT 1 FROM tournament_rosters tr WHERE tr.player_id = p.player_id)
+      AND NOT EXISTS (SELECT 1 FROM team_members tm WHERE tm.player_id = p.player_id)
 ")->fetchColumn();
 
-// 6) บัญชีสมาชิกที่ยังไม่เคยเช็คอินเข้าแข่งขันเลย (ตรงกับหน้าจัดการสมาชิก)
-$membersNoTournamentCount = $pdo->query("
-    SELECT COUNT(*) FROM users u
-    WHERE u.role != 'admin'
-      AND NOT EXISTS (
-          SELECT 1 FROM players p 
-          JOIN player_checkin_history ch ON p.player_id = ch.player_id
-          WHERE p.user_id = u.user_id
-      )
-")->fetchColumn();
+$profileOnlyNoTournamentCount = $membersNoTournamentCount;
 
 // คำนวณเปอร์เซ็นต์สำหรับ Progress Bars
 $memberPieTotal = max(1, $memberCount);
@@ -346,7 +340,7 @@ $openTournaments = $pdo->query("
                     <div class="flex items-end justify-between">
                         <div>
                             <h3 class="text-3xl font-black font-display text-slate-900" data-countup="<?php echo $confirmedAthleteCount; ?>">0</h3>
-                            <p class="text-[11px] text-slate-400 mt-1">มีบัญชี + เคยเช็คอินเข้าแข่งขันแล้ว</p>
+                            <p class="text-[11px] text-slate-400 mt-1">มีบัญชี + มีประวัติแข่งขันในทัวร์นาเมนต์</p>
                         </div>
                         <span class="text-xs font-bold text-amber-600 opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1 mb-1">
                             ดูรายชื่อ <i class="fa-solid fa-arrow-right text-[10px]"></i>
@@ -355,7 +349,7 @@ $openTournaments = $pdo->query("
                 </a>
 
                 <!-- Card 3: สมาชิกยังไม่เคยแข่ง -->
-                <a href="manage-members.php" class="stat-card-light p-5 rounded-2xl relative block group">
+                <a href="manage-members.php?profile=profile_only" class="stat-card-light p-5 rounded-2xl relative block group">
                     <div class="flex items-center justify-between mb-2">
                         <span class="text-xs font-bold uppercase tracking-wider text-slate-500">สมาชิกยังไม่เคยแข่ง</span>
                         <div class="w-9 h-9 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center text-lg group-hover:scale-110 transition-transform">
@@ -365,7 +359,7 @@ $openTournaments = $pdo->query("
                     <div class="flex items-end justify-between">
                         <div>
                             <h3 class="text-3xl font-black font-display text-slate-900" data-countup="<?php echo $membersNoTournamentCount; ?>">0</h3>
-                            <p class="text-[11px] text-slate-400 mt-1">บัญชีสมัครสมาชิกที่ยังไม่เคยเช็คอินแข่ง</p>
+                            <p class="text-[11px] text-slate-400 mt-1">บัญชีสมาชิกที่ยังไม่เคยลงแข่งทัวร์นาเมนต์</p>
                         </div>
                         <span class="text-xs font-bold text-indigo-600 opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1 mb-1">
                             ดูสมาชิก <i class="fa-solid fa-arrow-right text-[10px]"></i>
