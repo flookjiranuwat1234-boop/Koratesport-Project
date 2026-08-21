@@ -2,6 +2,7 @@
 require_once __DIR__ . '/../config/db.php';
 
 $teamsData = [
+    // --- ชุดที่ 1 (ทีม 1 - 8) ---
     [
         'team_name' => 'KORAT VIPERS',
         'category' => 'open',
@@ -96,6 +97,104 @@ $teamsData = [
             ['username' => 'valor_adl', 'email' => 'valor_adl@korat.esport', 'name' => 'VCK_Marksman', 'role' => 'Abyssal Dragon Lane (Carry)', 'is_cap' => false, 'is_sub' => 0],
             ['username' => 'valor_sup', 'email' => 'valor_sup@korat.esport', 'name' => 'VCK_Shield', 'role' => 'Support / Roamer', 'is_cap' => false, 'is_sub' => 0],
             ['username' => 'valor_sub', 'email' => 'valor_sub@korat.esport', 'name' => 'VCK_Ghost', 'role' => 'Substitute / ตัวสำรอง', 'is_cap' => false, 'is_sub' => 1],
+        ]
+    ],
+
+    // --- ชุดที่ 2 เพิ่มใหม่อีก 8 ทีม (ทีม 9 - 16) ---
+    [
+        'team_name' => 'FULL SENSE',
+        'category' => 'open',
+        'members' => [
+            ['username' => 'fs_cap', 'email' => 'fs_cap@korat.esport', 'name' => 'FS_Sharkz', 'role' => 'Captain & Mid Lane', 'is_cap' => true, 'is_sub' => 0],
+            ['username' => 'fs_dsl', 'email' => 'fs_dsl@korat.esport', 'name' => 'FS_Leviathan', 'role' => 'Dark Slayer Lane', 'is_cap' => false, 'is_sub' => 0],
+            ['username' => 'fs_jg',  'email' => 'fs_jg@korat.esport',  'name' => 'FS_Miracle', 'role' => 'Jungle', 'is_cap' => false, 'is_sub' => 0],
+            ['username' => 'fs_adl', 'email' => 'fs_adl@korat.esport', 'name' => 'FS_Blaze', 'role' => 'Abyssal Dragon Lane (Carry)', 'is_cap' => false, 'is_sub' => 0],
+            ['username' => 'fs_sup', 'email' => 'fs_sup@korat.esport', 'name' => 'FS_Aegis', 'role' => 'Support / Roamer', 'is_cap' => false, 'is_sub' => 0],
+            ['username' => 'fs_sub', 'email' => 'fs_sub@korat.esport', 'name' => 'FS_Nova', 'role' => 'Substitute / ตัวสำรอง', 'is_cap' => false, 'is_sub' => 1],
+        ]
+    ],
+    [
+        'team_name' => 'PSG ESPORTS',
+        'category' => 'open',
+        'members' => [
+            ['username' => 'psg_cap', 'email' => 'psg_cap@korat.esport', 'name' => 'PSG_FirstOne', 'role' => 'Captain & Mid Lane', 'is_cap' => true, 'is_sub' => 0],
+            ['username' => 'psg_dsl', 'email' => 'psg_dsl@korat.esport', 'name' => 'PSG_Gunnz', 'role' => 'Dark Slayer Lane', 'is_cap' => false, 'is_sub' => 0],
+            ['username' => 'psg_jg',  'email' => 'psg_jg@korat.esport',  'name' => 'PSG_Getz', 'role' => 'Jungle', 'is_cap' => false, 'is_sub' => 0],
+            ['username' => 'psg_adl', 'email' => 'psg_adl@korat.esport', 'name' => 'PSG_Hrl', 'role' => 'Abyssal Dragon Lane (Carry)', 'is_cap' => false, 'is_sub' => 0],
+            ['username' => 'psg_sup', 'email' => 'psg_sup@korat.esport', 'name' => 'PSG_Isil', 'role' => 'Support / Roamer', 'is_cap' => false, 'is_sub' => 0],
+            ['username' => 'psg_sub', 'email' => 'psg_sub@korat.esport', 'name' => 'PSG_Mist', 'role' => 'Substitute / ตัวสำรอง', 'is_cap' => false, 'is_sub' => 1],
+        ]
+    ],
+    [
+        'team_name' => 'BLACK PEARL ESPORT',
+        'category' => 'open',
+        'members' => [
+            ['username' => 'bp_cap', 'email' => 'bp_cap@korat.esport', 'name' => 'BP_Poseidon', 'role' => 'Captain & Mid Lane', 'is_cap' => true, 'is_sub' => 0],
+            ['username' => 'bp_dsl', 'email' => 'bp_dsl@korat.esport', 'name' => 'BP_Kraken', 'role' => 'Dark Slayer Lane', 'is_cap' => false, 'is_sub' => 0],
+            ['username' => 'bp_jg',  'email' => 'bp_jg@korat.esport',  'name' => 'BP_Phantom', 'role' => 'Jungle', 'is_cap' => false, 'is_sub' => 0],
+            ['username' => 'bp_adl', 'email' => 'bp_adl@korat.esport', 'name' => 'BP_Treasure', 'role' => 'Abyssal Dragon Lane (Carry)', 'is_cap' => false, 'is_sub' => 0],
+            ['username' => 'bp_sup', 'email' => 'bp_sup@korat.esport', 'name' => 'BP_Anchor', 'role' => 'Support / Roamer', 'is_cap' => false, 'is_sub' => 0],
+            ['username' => 'bp_sub', 'email' => 'bp_sub@korat.esport', 'name' => 'BP_Siren', 'role' => 'Substitute / ตัวสำรอง', 'is_cap' => false, 'is_sub' => 1],
+        ]
+    ],
+    [
+        'team_name' => 'PHOENIX FORCE',
+        'category' => 'open',
+        'members' => [
+            ['username' => 'px_cap', 'email' => 'px_cap@korat.esport', 'name' => 'PX_Solaris', 'role' => 'Captain & Mid Lane', 'is_cap' => true, 'is_sub' => 0],
+            ['username' => 'px_dsl', 'email' => 'px_dsl@korat.esport', 'name' => 'PX_Ignis', 'role' => 'Dark Slayer Lane', 'is_cap' => false, 'is_sub' => 0],
+            ['username' => 'px_jg',  'email' => 'px_jg@korat.esport',  'name' => 'PX_Flare', 'role' => 'Jungle', 'is_cap' => false, 'is_sub' => 0],
+            ['username' => 'px_adl', 'email' => 'px_adl@korat.esport', 'name' => 'PX_Blaze', 'role' => 'Abyssal Dragon Lane (Carry)', 'is_cap' => false, 'is_sub' => 0],
+            ['username' => 'px_sup', 'email' => 'px_sup@korat.esport', 'name' => 'PX_Ashes', 'role' => 'Support / Roamer', 'is_cap' => false, 'is_sub' => 0],
+            ['username' => 'px_sub', 'email' => 'px_sub@korat.esport', 'name' => 'PX_Ember', 'role' => 'Substitute / ตัวสำรอง', 'is_cap' => false, 'is_sub' => 1],
+        ]
+    ],
+    [
+        'team_name' => 'NEXUS GAMING',
+        'category' => 'open',
+        'members' => [
+            ['username' => 'nx_cap', 'email' => 'nx_cap@korat.esport', 'name' => 'NX_Vortex', 'role' => 'Captain & Mid Lane', 'is_cap' => true, 'is_sub' => 0],
+            ['username' => 'nx_dsl', 'email' => 'nx_dsl@korat.esport', 'name' => 'NX_Titan', 'role' => 'Dark Slayer Lane', 'is_cap' => false, 'is_sub' => 0],
+            ['username' => 'nx_jg',  'email' => 'nx_jg@korat.esport',  'name' => 'NX_Cyber', 'role' => 'Jungle', 'is_cap' => false, 'is_sub' => 0],
+            ['username' => 'nx_adl', 'email' => 'nx_adl@korat.esport', 'name' => 'NX_Pulse', 'role' => 'Abyssal Dragon Lane (Carry)', 'is_cap' => false, 'is_sub' => 0],
+            ['username' => 'nx_sup', 'email' => 'nx_sup@korat.esport', 'name' => 'NX_Matrix', 'role' => 'Support / Roamer', 'is_cap' => false, 'is_sub' => 0],
+            ['username' => 'nx_sub', 'email' => 'nx_sub@korat.esport', 'name' => 'NX_Glitch', 'role' => 'Substitute / ตัวสำรอง', 'is_cap' => false, 'is_sub' => 1],
+        ]
+    ],
+    [
+        'team_name' => 'DRAGON X ESPORT',
+        'category' => 'open',
+        'members' => [
+            ['username' => 'drx_cap', 'email' => 'drx_cap@korat.esport', 'name' => 'DRX_Bahamut', 'role' => 'Captain & Mid Lane', 'is_cap' => true, 'is_sub' => 0],
+            ['username' => 'drx_dsl', 'email' => 'drx_dsl@korat.esport', 'name' => 'DRX_Scale', 'role' => 'Dark Slayer Lane', 'is_cap' => false, 'is_sub' => 0],
+            ['username' => 'drx_jg',  'email' => 'drx_jg@korat.esport',  'name' => 'DRX_Fang', 'role' => 'Jungle', 'is_cap' => false, 'is_sub' => 0],
+            ['username' => 'drx_adl', 'email' => 'drx_adl@korat.esport', 'name' => 'DRX_Inferno', 'role' => 'Abyssal Dragon Lane (Carry)', 'is_cap' => false, 'is_sub' => 0],
+            ['username' => 'drx_sup', 'email' => 'drx_sup@korat.esport', 'name' => 'DRX_Roar', 'role' => 'Support / Roamer', 'is_cap' => false, 'is_sub' => 0],
+            ['username' => 'drx_sub', 'email' => 'drx_sub@korat.esport', 'name' => 'DRX_Wyvern', 'role' => 'Substitute / ตัวสำรอง', 'is_cap' => false, 'is_sub' => 1],
+        ]
+    ],
+    [
+        'team_name' => 'SHADOW WOLVES',
+        'category' => 'open',
+        'members' => [
+            ['username' => 'sw_cap', 'email' => 'sw_cap@korat.esport', 'name' => 'SW_Alpha', 'role' => 'Captain & Mid Lane', 'is_cap' => true, 'is_sub' => 0],
+            ['username' => 'sw_dsl', 'email' => 'sw_dsl@korat.esport', 'name' => 'SW_Grim', 'role' => 'Dark Slayer Lane', 'is_cap' => false, 'is_sub' => 0],
+            ['username' => 'sw_jg',  'email' => 'sw_jg@korat.esport',  'name' => 'SW_Stalker', 'role' => 'Jungle', 'is_cap' => false, 'is_sub' => 0],
+            ['username' => 'sw_adl', 'email' => 'sw_adl@korat.esport', 'name' => 'SW_Howler', 'role' => 'Abyssal Dragon Lane (Carry)', 'is_cap' => false, 'is_sub' => 0],
+            ['username' => 'sw_sup', 'email' => 'sw_sup@korat.esport', 'name' => 'SW_Pack', 'role' => 'Support / Roamer', 'is_cap' => false, 'is_sub' => 0],
+            ['username' => 'sw_sub', 'email' => 'sw_sub@korat.esport', 'name' => 'SW_Ghost', 'role' => 'Substitute / ตัวสำรอง', 'is_cap' => false, 'is_sub' => 1],
+        ]
+    ],
+    [
+        'team_name' => 'CYBER KNIGHTS',
+        'category' => 'open',
+        'members' => [
+            ['username' => 'ck_cap', 'email' => 'ck_cap@korat.esport', 'name' => 'CK_Arthur', 'role' => 'Captain & Mid Lane', 'is_cap' => true, 'is_sub' => 0],
+            ['username' => 'ck_dsl', 'email' => 'ck_dsl@korat.esport', 'name' => 'CK_Lancelot', 'role' => 'Dark Slayer Lane', 'is_cap' => false, 'is_sub' => 0],
+            ['username' => 'ck_jg',  'email' => 'ck_jg@korat.esport',  'name' => 'CK_Galahad', 'role' => 'Jungle', 'is_cap' => false, 'is_sub' => 0],
+            ['username' => 'ck_adl', 'email' => 'ck_adl@korat.esport', 'name' => 'CK_Percival', 'role' => 'Abyssal Dragon Lane (Carry)', 'is_cap' => false, 'is_sub' => 0],
+            ['username' => 'ck_sup', 'email' => 'ck_sup@korat.esport', 'name' => 'CK_Gawain', 'role' => 'Support / Roamer', 'is_cap' => false, 'is_sub' => 0],
+            ['username' => 'ck_sub', 'email' => 'ck_sub@korat.esport', 'name' => 'CK_Merlin', 'role' => 'Substitute / ตัวสำรอง', 'is_cap' => false, 'is_sub' => 1],
         ]
     ],
 ];
@@ -203,7 +302,7 @@ foreach ($teamsData as $tData) {
     }
 }
 
-echo "=== SEEDING COMPLETED ===\n";
+echo "=== SEEDING 16 TEAMS COMPLETED ===\n";
 echo "Total Teams Processed: " . count($teamsData) . "\n";
 echo "Total Players/Users: " . (count($teamsData) * 6) . "\n";
 echo "Default Password for all accounts: {$defaultPassword}\n";

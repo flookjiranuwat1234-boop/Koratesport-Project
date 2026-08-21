@@ -42,6 +42,9 @@ function addColumnIfNotExists($pdo, $table, $column, $definition) {
  */
 function ensureCoreSchema($pdo) {
     // 1. ตาราง tournament_registrations
+    try {
+        $pdo->exec("ALTER TABLE tournament_registrations MODIFY COLUMN team_id INT(10) UNSIGNED NULL");
+    } catch (Exception $e) {}
     addColumnIfNotExists($pdo, 'tournament_registrations', 'player_id', 'INT NULL');
     addColumnIfNotExists($pdo, 'tournament_registrations', 'category', "VARCHAR(20) NOT NULL DEFAULT 'open'");
     addColumnIfNotExists($pdo, 'tournament_registrations', 'qr_code_token', 'VARCHAR(100) NULL');

@@ -822,10 +822,10 @@ $csrfToken = generateCsrfToken();
                                             <?php else: ?>
                                                 <div class="flex flex-col items-center gap-1">
                                                     <span class="text-xs font-bold <?= $checkedCount >= $minRosterRequired ? 'text-emerald-600' : ($checkedCount > 0 ? 'text-amber-600' : 'text-slate-400'); ?>">
-                                                        <?= $checkedCount; ?> / <?= $minRosterRequired; ?> คน
+                                                        <?= $checkedCount; ?> / <?= max($totalCount, $minRosterRequired); ?> คน
                                                     </span>
                                                     <div class="w-20 bg-slate-100 rounded-full h-1.5 overflow-hidden">
-                                                        <?php $pct = min(100, round(($checkedCount / max(1, $minRosterRequired)) * 100)); ?>
+                                                        <?php $pct = min(100, round(($checkedCount / max(1, $totalCount, $minRosterRequired)) * 100)); ?>
                                                         <div class="h-full <?= $checkedCount >= $minRosterRequired ? 'bg-emerald-500' : ($checkedCount > 0 ? 'bg-amber-500' : 'bg-slate-300'); ?>" style="width: <?= $pct; ?>%"></div>
                                                     </div>
                                                 </div>

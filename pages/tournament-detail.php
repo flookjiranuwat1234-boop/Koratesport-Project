@@ -63,11 +63,12 @@ $allMatches = $mStmt->fetchAll();
 $availableCategories = [];
 foreach ($allMatches as $m) {
     $bt = strtolower($m['bracket_type'] ?? '');
-    if (strpos($bt, 'female') !== false) {
+    $mCat = strtolower($m['category'] ?? '');
+    if ($mCat === 'female' || strpos($bt, 'female') !== false) {
         $availableCategories['female'] = '👩 สายทีมหญิง';
-    } elseif (strpos($bt, 'male') !== false) {
+    } elseif ($mCat === 'male' || str_ends_with($bt, '_male') || $bt === 'single_male' || $bt === 'double_male') {
         $availableCategories['male'] = '👨 สายทีมชาย';
-    } elseif (strpos($bt, 'open') !== false) {
+    } elseif ($mCat === 'open' || strpos($bt, 'open') !== false) {
         $availableCategories['open'] = '⚡ สาย Open';
     } else {
         $availableCategories['open'] = '⚡ สายการแข่งขัน';
@@ -86,14 +87,24 @@ if (!empty($reqCategory) && isset($availableCategories[$reqCategory])) {
     $selectedCategory = $availableKeys[0];
 }
 
-// กรองแมตช์ตามประเภทที่เลือก
+// กรองแมตช์ตามประเภทที่เลือกอย่างถูกต้อง (ป้องกันคำว่า female ซ้ำกับ male)
 if (count($availableCategories) > 1) {
     $matches = array_filter($allMatches, function($m) use ($selectedCategory) {
         $bt = strtolower($m['bracket_type'] ?? '');
+        $mCat = strtolower($m['category'] ?? '');
         $c1 = strtolower($m['team1_cat'] ?? '');
         $c2 = strtolower($m['team2_cat'] ?? '');
-        if (strpos($bt, $selectedCategory) !== false) return true;
-        if ($c1 === $selectedCategory || $c2 === $selectedCategory) return true;
+
+        $isFemale = ($mCat === 'female' || strpos($bt, 'female') !== false || $c1 === 'female' || $c2 === 'female');
+        $isMale = (!$isFemale && ($mCat === 'male' || str_ends_with($bt, '_male') || $bt === 'single_male' || $bt === 'double_male' || $c1 === 'male' || $c2 === 'male'));
+
+        if ($selectedCategory === 'female') {
+            return $isFemale;
+        } elseif ($selectedCategory === 'male') {
+            return $isMale;
+        } elseif ($selectedCategory === 'open') {
+            return (!$isFemale && !$isMale);
+        }
         return false;
     });
 } else {
@@ -178,16 +189,18 @@ try {
     $registeredCompetitors = [];
 }
 
-function roundName($roundNum, $totalRounds)
-{
-    $fromEnd = $totalRounds - $roundNum;
-    if ($fromEnd == 0)
-        return 'รอบชิงชนะเลิศ';
-    if ($fromEnd == 1)
-        return 'รอบรองชนะเลิศ';
-    if ($fromEnd == 2)
-        return 'รอบก่อนรองชนะเลิศ';
-    return "รอบที่ {$roundNum}";
+if (!function_exists('roundName')) {
+    function roundName($roundNum, $totalRounds)
+    {
+        $fromEnd = $totalRounds - $roundNum;
+        if ($fromEnd == 0)
+            return 'รอบชิงชนะเลิศ';
+        if ($fromEnd == 1)
+            return 'รอบรองชนะเลิศ';
+        if ($fromEnd == 2)
+            return 'รอบก่อนรองชนะเลิศ';
+        return "รอบที่ {$roundNum}";
+    }
 }
 ?>
 <!DOCTYPE html>

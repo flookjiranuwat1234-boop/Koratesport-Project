@@ -260,15 +260,14 @@ if ($tournamentId) {
     // จัดหมวดหมู่แมตช์ตาม Category ที่เลือก (Male, Female, Open) โดยไม่ทำให้ทีมตกหาย
     foreach ($rawMatches as $m) {
         $bt = strtolower($m['bracket_type'] ?? '');
+        $mCat = strtolower($m['category'] ?? '');
         $c1 = strtolower($m['team1_cat'] ?? 'open');
         $c2 = strtolower($m['team2_cat'] ?? 'open');
 
-        $matchCat = 'open';
-        if (strpos($bt, 'male') !== false || $c1 === 'male' || $c2 === 'male') {
-            $matchCat = 'male';
-        } elseif (strpos($bt, 'female') !== false || $c1 === 'female' || $c2 === 'female') {
-            $matchCat = 'female';
-        }
+        $isFemale = ($mCat === 'female' || strpos($bt, 'female') !== false || $c1 === 'female' || $c2 === 'female');
+        $isMale = (!$isFemale && ($mCat === 'male' || str_ends_with($bt, '_male') || $bt === 'single_male' || $bt === 'double_male' || $c1 === 'male' || $c2 === 'male'));
+
+        $matchCat = $isFemale ? 'female' : ($isMale ? 'male' : 'open');
 
         // หากตรงกับหมวดที่เลือก (หรือถ้าเลือก all ให้แสดงทั้งหมด)
         if ($filterCategory === 'all' || $matchCat === $filterCategory || ($filterCategory === 'open' && $matchCat === 'open')) {
@@ -282,12 +281,16 @@ if ($tournamentId) {
     }
 
     foreach ($matches as $m) {
-        $bt = $m['bracket_type'] ?? 'single';
+        $bt = strtolower($m['bracket_type'] ?? 'single');
+        $mCat = strtolower($m['category'] ?? '');
         $catLabel = '';
         $c1 = strtolower($m['team1_cat'] ?? 'open');
         
-        if (strpos($bt, 'male') !== false || $c1 === 'male') $catLabel = ' [ประเภททีมชาย]';
-        elseif (strpos($bt, 'female') !== false || $c1 === 'female') $catLabel = ' [ประเภททีมหญิง]';
+        $isFemale = ($mCat === 'female' || strpos($bt, 'female') !== false || $c1 === 'female');
+        $isMale = (!$isFemale && ($mCat === 'male' || str_ends_with($bt, '_male') || $bt === 'single_male' || $bt === 'double_male' || $c1 === 'male'));
+
+        if ($isFemale) $catLabel = ' [ประเภททีมหญิง]';
+        elseif ($isMale) $catLabel = ' [ประเภททีมชาย]';
         else $catLabel = ' [ประเภท Open]';
 
         $groupKey = 'รอบการแข่งขันนัดที่ ' . $m['round_number'] . $catLabel;

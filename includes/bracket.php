@@ -189,13 +189,15 @@ function getSeededTeamsWithCategory($pdo, $tournamentId, $gameId)
         return $stmt->fetchAll(PDO::FETCH_ASSOC);
     } else {
         $stmt = $pdo->prepare("
-            SELECT DISTINCT tr.team_id AS competitor_id, tm.team_category AS category, tm.name AS team_name
+            SELECT DISTINCT tr.team_id AS competitor_id, 
+                   COALESCE(NULLIF(tr.category, ''), NULLIF(tm.category, ''), NULLIF(tm.team_category, ''), '') AS category, 
+                   tm.name AS team_name
             FROM tournament_registrations tr
             JOIN teams tm ON tm.team_id = tr.team_id
             WHERE tr.tournament_id = :tid 
               AND tr.team_id IS NOT NULL
               AND tr.status NOT IN ('rejected', 'withdrawn', 'walkover', 'disqualified')
-              AND (tr.checkin_status IN ('checked_in', 'qualified') OR tr.status = 'qualified')
+              AND (tr.checkin_status IN ('checked_in', 'qualified') OR tr.status = 'qualified' OR tr.status = 'approved')
             ORDER BY tr.registered_at ASC
         ");
         $stmt->execute(['tid' => $tournamentId]);
@@ -203,12 +205,16 @@ function getSeededTeamsWithCategory($pdo, $tournamentId, $gameId)
 
         $results = [];
         foreach ($rows as $row) {
-            $cat = $row['category'];
+            $cat = strtolower(trim($row['category']));
             $tName = $row['team_name'];
-            if (empty($cat)) {
-                if (stripos($tName, 'หญิง') !== false) $cat = 'female';
-                elseif (stripos($tName, 'ชาย') !== false) $cat = 'male';
-                else $cat = 'open';
+            if (empty($cat) || !in_array($cat, ['male', 'female', 'open'])) {
+                if (stripos($tName, 'หญิง') !== false || stripos($tName, 'female') !== false || stripos($tName, 'women') !== false || stripos($tName, 'lady') !== false) {
+                    $cat = 'female';
+                } elseif (stripos($tName, 'ชาย') !== false || stripos($tName, 'male') !== false || stripos($tName, 'men') !== false) {
+                    $cat = 'male';
+                } else {
+                    $cat = 'open';
+                }
             }
             $results[] = [
                 'competitor_id' => $row['competitor_id'],
